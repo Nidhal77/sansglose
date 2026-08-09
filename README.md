@@ -4,13 +4,6 @@ Quatorze pièces qui essaient d'instancier quelque chose d'inatteignable plutôt
 
 *Fourteen pieces that attempt to instantiate something unreachable rather than describe it. This repository holds the sources, the script that builds the site, and this text.*
 
-> **Ce fichier est la carte.** Il n'est pas publié : GitHub Pages sert `docs/`, jamais la racine du dépôt. Le site, lui, n'explique rien et ne se laisse pas cataloguer. Qui arrive ici obtient ce que le site refuse de donner — c'est délibéré, et c'est le seul endroit où ça l'est.
->
-> *This file is the map. It is not published: GitHub Pages serves `docs/`, never the repository root. The site itself explains nothing and cannot be catalogued. Anyone arriving here gets what the site withholds — deliberately, and only here.*
-
----
----
-
 # Français
 
 ## Navigation
@@ -124,7 +117,7 @@ Vingt-six émetteurs inventent des formes pour se coordonner sur une scène comm
 
 ---
 
-### `281963` — substrat
+### `281963` — musique pour une araignée
 
 L'audition d'une araignée, par les sensilles en fente de ses pattes. On tire une patte, on frappe la toile ; le son est synthétisé en AudioWorklet, avec repli sur ScriptProcessorNode.
 
@@ -308,7 +301,7 @@ Twenty-six emitters invent forms in order to coordinate on a shared scene. Forms
 
 ---
 
-### `281963` — substrate
+### `281963` — music for a spider
 
 A spider's hearing, through the slit sensilla in its legs. Pull a leg, strike the web; the sound is synthesised in an AudioWorklet with a ScriptProcessorNode fallback.
 
@@ -377,12 +370,3 @@ Four byte buffers in a grid, with an excitable medium running inside. The pointe
 **What resisted.** Three buffers carry, for each cell, a triplet in an order fixed by the fourth. That order is a gauge: relabelling it everywhere changes the trajectory not at all — verified. Changing it locally, mid-run, changes it. This is the hard point of the piece: a convention with no content, which has effect only through its inhomogeneity. The visitor's gesture measures nothing and adds nothing; it changes a convention, and the trajectory diverges regardless.
 
 ---
----
-
-## Build
-
-```
-node build.js --base=/<repository-name>/
-```
-
-Adding a work: drop the `.html` into `sources/`, rebuild, push. Nothing else — no registry, no metadata. See `MISE-EN-LIGNE.md`.
