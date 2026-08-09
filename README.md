@@ -35,7 +35,7 @@ Quatorze pièces qui essaient d'instancier quelque chose d'inatteignable plutôt
 | `84cea1` | dépôt | un mécanisme de dix mille cycles, en coupe et en marche |
 | `892f02` | galerie des inexposables | des œuvres dont la seule description légitime est leur propre programme |
 | `b4e85d` | Kènt | vingt-six émetteurs inventent une écriture que personne ne lit |
-| `281963` | substrat | l'audition d'une araignée, où la hauteur n'existe pas |
+| `281963` | musique pour une araignée | l'audition d'une araignée, où la hauteur n'existe pas |
 | `a94d2b` | — (sans noms) | une matinée dite en processus, taux et transitions, sans un seul nom |
 | `43f1f8` | Ω | 64 bits connus d'un nombre dont le 65ᵉ est indécidable |
 | `c635bb` | ℤp | une distance où « plus près » ne veut pas dire ce qu'on croit |
@@ -219,7 +219,7 @@ Quatre tampons d'octets, en grille. Un milieu excitable tourne dedans. Le pointe
 | `84cea1` | dépôt | a ten-thousand-cycle mechanism, in section and in motion |
 | `892f02` | gallery of the unexhibitable | works whose only legitimate description is their own program |
 | `b4e85d` | Kènt | twenty-six emitters invent a script nobody reads |
-| `281963` | substrate | a spider's hearing, in which pitch does not exist |
+| `281963` | music for a spider | a spider's hearing, in which pitch does not exist |
 | `a94d2b` | — (no nouns) | a morning told in process, rate and transition, without a single noun |
 | `43f1f8` | Ω | 64 known bits of a number whose 65th is undecidable |
 | `c635bb` | ℤp | a distance where "closer" does not mean what you think |
