@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#e9e8e2;
+    --ink:#1a1c1f;
+    --bar:#333a42;
+    --acc:#8c3a22;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink)}
+  body{
+    font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    -webkit-font-smoothing:antialiased;
+    padding:36px 18px 48px;
+    display:flex;justify-content:center;
+  }
+  #wrap{width:100%;max-width:940px}
+  header{
+    display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;
+    font-size:11px;letter-spacing:.04em;margin-bottom:16px;
+  }
+  #label{font-size:17px;font-weight:500;letter-spacing:0}
+  #primes{display:flex;gap:10px;font-size:11px}
+  #primes span{
+    cursor:pointer;color:rgba(26,28,31,.34);
+    padding:1px 0;border-bottom:1px solid transparent;
+  }
+  #primes span:hover{color:rgba(26,28,31,.7)}
+  #primes span.on{color:var(--ink);border-bottom-color:var(--ink)}
+  #primes span:focus-visible,#reseed:focus-visible{outline:1px solid var(--ink);outline-offset:3px}
+  #reseed{cursor:pointer;color:rgba(26,28,31,.34);font-size:13px;line-height:1}
+  #reseed:hover{color:var(--ink)}
+  #norm{margin-left:auto;color:rgba(26,28,31,.4)}
+  canvas{display:block;width:100%;touch-action:pan-y;cursor:pointer}
+  footer{
+    margin-top:16px;font-size:10.5px;letter-spacing:.05em;
+    color:rgba(26,28,31,.34);
+  }
+  @media (max-width:520px){
+    #norm{margin-left:0;width:100%}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <span id="label"></span>
+    <nav id="primes"></nav>
+    <span id="reseed" role="button" tabindex="0" title="reseed">&#8635;</span>
+    <span id="norm"></span>
+  </header>
+  <canvas id="c"></canvas>
+  <footer id="foot"></footer>
+</div>
+<script>
+(function(){
+"use strict";
+
+var DIG='0123456789abcdefghijklmnopqrstuvwxyz';
+var PRIMES=[2,3,5,7,11,13];
+var SUB={2:'\u2082',3:'\u2083',5:'\u2085',7:'\u2087',11:'\u2081\u2081',13:'\u2081\u2083'};
+
+var DEPTH=4096;
+var NROW=10, NTRAIL=10;
+var BASE=[0,1,2,3,4,6,8,11,15,21];
+
+var BG='#e9e8e2', INK='#1a1c1f', BAR='#333a42', ACC='#8c3a22';
+
+var p=2, seed=(Date.now()>>>7)&0x7fffffff;
+var pos, others=[], othD=[], othV=[];
+var trail=[], trD=[], trV=[];
+var offset=0, hoverK=null, flash=null;
+
+var cv=document.getElementById('c');
+var ctx=cv.getContext('2d');
+var wrap=document.getElementById('wrap');
+var dpr=Math.max(1,Math.min(3,window.devicePixelRatio||1));
+
+var W=0,H=0,N=48,cw=12,fieldX=20,fieldW=600,padR=14;
+var rulerNumY=13, tickY=18, ribbonY=41, sepY=53, othTop=66, rowH=15, trRule=0, trTop=0, fs=12;
+
+/* ---------- space ---------- */
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+function fd(a,b){for(var i=0;i<DEPTH;i++)if(a[i]!==b[i])return i;return DEPTH;}
+
+function build(){
+  var rng=mulberry32((seed^Math.imul(p,2654435761))>>>0);
+  pos=new Uint8Array(DEPTH);
+  for(var i=0;i<DEPTH;i++)pos[i]=(rng()*p)|0;
+  var ds=BASE.slice();
+  for(var j=ds.length-1;j>0;j--){var q=(rng()*(j+1))|0;var t=ds[j];ds[j]=ds[q];ds[q]=t;}
+  others=ds.map(function(D){
+    var a=new Uint8Array(DEPTH),i;
+    for(i=0;i<D;i++)a[i]=pos[i];
+    a[D]=(pos[D]+1+((rng()*(p-1))|0))%p;
+    for(i=D+1;i<DEPTH;i++)a[i]=(rng()*p)|0;
+    return a;
+  });
+  trail=[];trD=[];trV=[];
+  offset=0;flash=null;
+  othD=others.map(function(a){return fd(a,pos);});
+  othV=othD.slice();
+}
+
+function recompute(){
+  othD=others.map(function(a){return fd(a,pos);});
+  trD=trail.map(function(a){return fd(a,pos);});
+}
+
+function step(k,dir){
+  trail.unshift(pos.slice()); trV.unshift(0);
+  if(trail.length>NTRAIL){trail.pop();trV.pop();}
+  var i=k;
+  if(dir>0){while(i<DEPTH){pos[i]++;if(pos[i]<p)break;pos[i]=0;i++;}}
+  else{while(i<DEPTH){if(pos[i]>0){pos[i]--;break;}pos[i]=p-1;i++;}}
+  flash={a:k,b:Math.min(i,DEPTH-1),t:performance.now()};
+  recompute();
+  trV[0]=trD[0];
+}
+
+/* ---------- layout ---------- */
+
+function layout(){
+  W=wrap.clientWidth;
+  N = W>=880?64 : W>=680?48 : W>=470?32 : 24;
+  fieldX=20;
+  var gutter=38;
+  fieldW=W-fieldX-gutter-padR;
+  cw=fieldW/N;
+  fs=Math.min(cw*0.92,14.5);
+  trRule=othTop+NROW*rowH+11;
+  trTop=trRule+13;
+  H=trTop+NTRAIL*rowH+8;
+  cv.style.height=H+'px';
+  cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  if(offset>DEPTH-N)offset=DEPTH-N;
+}
+
+/* ---------- draw ---------- */
+
+var last=performance.now();
+var calm=window.matchMedia('(prefers-reduced-motion: reduce)');
+
+function cell(k){return fieldX+(k-offset)*cw;}
+
+function run(d,y,alpha){
+  var end=Math.min(d,offset+N);
+  ctx.fillStyle=BAR;
+  if(d>offset){
+    ctx.globalAlpha=alpha;
+    var full=Math.floor(end);
+    for(var k=offset;k<full;k++){
+      ctx.fillRect(cell(k)+0.9,y-2.5,Math.max(1.4,cw-1.8),5);
+    }
+    var frac=end-full;
+    if(frac>0.02&&full<offset+N){
+      ctx.fillRect(cell(full)+0.9,y-2.5,Math.max(0.6,(cw-1.8)*frac),5);
+    }
+  }else{
+    ctx.globalAlpha=alpha*0.45;
+    ctx.fillRect(fieldX-9,y-1,4,2);
+  }
+  ctx.globalAlpha=1;
+}
+
+function gut(d,y,mul){
+  mul=mul||1;
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  ctx.globalAlpha=0.42*mul; ctx.fillStyle=INK;
+  ctx.font='9.5px "IBM Plex Mono",monospace';
+  ctx.fillText(d>=DEPTH?'\u221e':String(d),W-padR,y+0.5);
+  if(d>offset+N&&d<DEPTH){
+    ctx.globalAlpha=0.3*mul;
+    ctx.fillRect(fieldX+fieldW+3,y-1,5,2);
+  }
+  ctx.globalAlpha=1;
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+}
+
+function draw(now){
+  var dt=Math.min(64,now-last); last=now;
+  var kf=calm.matches?1:(1-Math.exp(-dt/62));
+  var i,t;
+
+  for(i=0;i<othD.length;i++){
+    t=Math.min(othD[i],offset+N+2);
+    othV[i]+=(t-othV[i])*kf;
+    if(Math.abs(t-othV[i])<0.01)othV[i]=t;
+  }
+  for(i=1;i<trD.length;i++){
+    t=Math.min(trD[i],offset+N+2);
+    trV[i]+=(t-trV[i])*kf;
+    if(Math.abs(t-trV[i])<0.01)trV[i]=t;
+  }
+
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+
+  if(hoverK!==null&&hoverK>=offset&&hoverK<offset+N){
+    ctx.globalAlpha=0.055; ctx.fillStyle=INK;
+    ctx.fillRect(cell(hoverK),22,cw,H-26);
+    ctx.globalAlpha=1;
+  }
+
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.font='9px "IBM Plex Mono",monospace';
+  var every=(N>=32)?8:4;
+  for(var k=offset;k<offset+N;k++){
+    var x=cell(k)+cw/2;
+    ctx.fillStyle=INK;
+    ctx.globalAlpha=(k%every===0)?0.3:0.13;
+    ctx.fillRect(x-0.5,tickY,1,3);
+    if(k%every===0){
+      ctx.globalAlpha=0.34;
+      ctx.fillText(String(k),x,rulerNumY);
+    }
+  }
+  ctx.globalAlpha=1;
+
+  ctx.font='500 '+fs.toFixed(1)+'px "IBM Plex Mono",monospace';
+  var fa=0;
+  if(flash){ fa=1-(now-flash.t)/760; if(fa<0){flash=null;fa=0;} }
+  for(var k2=offset;k2<offset+N;k2++){
+    var lit=!!(flash&&k2>=flash.a&&k2<=flash.b);
+    ctx.fillStyle=lit?ACC:INK;
+    ctx.globalAlpha=lit?(0.34+0.66*fa):0.9;
+    ctx.fillText(DIG[pos[k2]],cell(k2)+cw/2,ribbonY);
+  }
+  ctx.globalAlpha=1;
+
+  ctx.globalAlpha=0.16; ctx.fillStyle=INK;
+  ctx.fillRect(fieldX,sepY,fieldW,1);
+  ctx.globalAlpha=1;
+
+  for(i=0;i<NROW;i++){
+    var y=othTop+i*rowH+rowH/2;
+    run(othV[i],y,0.86);
+    gut(othD[i],y);
+  }
+
+  ctx.globalAlpha=0.16; ctx.fillStyle=INK;
+  ctx.fillRect(fieldX,trRule,fieldW,1);
+  ctx.globalAlpha=1;
+
+  for(i=0;i<NTRAIL;i++){
+    if(i>=trD.length)continue;
+    var y2=trTop+i*rowH+rowH/2;
+    run(trV[i],y2,0.4);
+    gut(trD[i],y2,0.55);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+/* ---------- interaction ---------- */
+
+function colAt(cx){
+  var k=offset+Math.floor((cx-fieldX)/cw);
+  if(k<offset)k=offset;
+  if(k>offset+N-1)k=offset+N-1;
+  return k;
+}
+
+cv.addEventListener('mousemove',function(e){
+  var r=cv.getBoundingClientRect();
+  hoverK=colAt(e.clientX-r.left);
+});
+cv.addEventListener('mouseleave',function(){hoverK=null;});
+cv.addEventListener('mousedown',function(e){
+  if(e.button!==0)return;
+  var r=cv.getBoundingClientRect();
+  step(colAt(e.clientX-r.left),1);
+});
+cv.addEventListener('contextmenu',function(e){
+  e.preventDefault();
+  var r=cv.getBoundingClientRect();
+  step(colAt(e.clientX-r.left),-1);
+});
+cv.addEventListener('wheel',function(e){
+  e.preventDefault();
+  var d=Math.abs(e.deltaX)>Math.abs(e.deltaY)?e.deltaX:e.deltaY;
+  if(d===0)return;
+  offset=Math.max(0,Math.min(DEPTH-N,offset+(d>0?4:-4)));
+},{passive:false});
+
+var tx=0,ty=0,tk=0,panned=false,acc=0;
+cv.addEventListener('touchstart',function(e){
+  var t=e.touches[0],r=cv.getBoundingClientRect();
+  tx=t.clientX;ty=t.clientY;tk=colAt(t.clientX-r.left);panned=false;acc=0;
+},{passive:true});
+cv.addEventListener('touchmove',function(e){
+  var t=e.touches[0];
+  var dx=t.clientX-tx, dy=t.clientY-ty;
+  if(!panned){
+    if(Math.abs(dx)<10)return;
+    if(Math.abs(dy)>Math.abs(dx))return;
+    panned=true;
+  }
+  e.preventDefault();
+  acc+=dx; tx=t.clientX;
+  var shift=Math.round(acc/cw);
+  if(shift!==0){
+    offset=Math.max(0,Math.min(DEPTH-N,offset-shift));
+    acc-=shift*cw;
+  }
+},{passive:false});
+cv.addEventListener('touchend',function(){ if(!panned)step(tk,1); });
+
+window.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'){offset=Math.min(DEPTH-N,offset+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'){offset=Math.max(0,offset-1);e.preventDefault();}
+  else if(e.key==='PageDown'){offset=Math.min(DEPTH-N,offset+N);e.preventDefault();}
+  else if(e.key==='PageUp'){offset=Math.max(0,offset-N);e.preventDefault();}
+});
+
+/* ---------- chrome ---------- */
+
+var nav=document.getElementById('primes');
+PRIMES.forEach(function(q){
+  var s=document.createElement('span');
+  s.textContent=q; s.tabIndex=0;
+  s.addEventListener('click',function(){setP(q);});
+  s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();setP(q);}});
+  nav.appendChild(s);
+});
+
+function chrome(){
+  var Z='\u2124'+SUB[p];
+  document.getElementById('label').textContent=Z;
+  document.getElementById('norm').textContent='|x\u2212y| = '+p+'\u207b\u207f';
+  document.getElementById('foot').textContent=
+    'k \u21a6 x + '+p+'\u1d4f \u00a0\u00b7\u00a0 right \u21a6 x \u2212 '+p+'\u1d4f \u00a0\u00b7\u00a0 scroll \u21a6 deeper';
+  var kids=nav.children;
+  for(var i=0;i<kids.length;i++)kids[i].className=(PRIMES[i]===p)?'on':'';
+  document.title=Z;
+}
+
+function setP(q){ p=q; build(); layout(); chrome(); }
+
+function reseed(){ seed=(Math.random()*2147483647)|0; build(); layout(); }
+document.getElementById('reseed').addEventListener('click',reseed);
+document.getElementById('reseed').addEventListener('keydown',function(e){
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();reseed();}
+});
+
+var rt;
+window.addEventListener('resize',function(){ clearTimeout(rt); rt=setTimeout(layout,80); });
+
+build(); layout(); chrome();
+requestAnimationFrame(draw);
+})();
+</script>
+
+<div id="sg-sorties" aria-hidden="true"><a href="../a94d2b/"></a><a href="../4672be/"></a><a href="../b4e85d/"></a></div>
+<style>
+#sg-sorties{position:fixed;right:20px;bottom:18px;z-index:2147483000;display:flex;gap:9px;line-height:0}
+#sg-sorties a{display:block;width:1px;height:15px;background:currentColor;opacity:.34;cursor:pointer;
+  transition:opacity .18s linear,height .18s linear}
+#sg-sorties a:hover,#sg-sorties a:focus-visible{opacity:.85;height:21px;outline:none}
+@media (pointer:coarse){#sg-sorties a{width:2px;height:26px;padding:8px 6px;background-clip:content-box}}
+</style>
+<script>(function(){var n=document.getElementById('sg-sorties');
+function lum(el){var c=getComputedStyle(el).backgroundColor||'';var m=c.match(/[\d.]+/g);
+if(!m||m.length<3)return null;if(m.length>3&&parseFloat(m[3])<0.2)return null;
+return (0.2126*m[0]+0.7152*m[1]+0.0722*m[2])/255;}
+var l=lum(document.body);if(l===null)l=lum(document.documentElement);if(l===null)l=1;
+n.style.color=l<0.5?'#ffffff':'#000000';})();</script>
+</body>
+</html>

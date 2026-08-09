@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>clock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@200;400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#DCE0DE;
+    --ink:#0F1513;
+    --stale:#8E9793;
+    --label:#A3ABA7;
+    --unread:#B6BDB9;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--ground);
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    touch-action:none;
+  }
+  #field{
+    height:100%;
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:0;
+    padding:0 40px;
+  }
+  .panel{
+    display:flex;
+    flex-direction:column;
+    gap:26px;
+    padding-right:24px;
+    outline:none;
+  }
+  .panel:focus-visible .designation{text-decoration:underline;text-underline-offset:5px}
+  .designation{
+    font-weight:400;
+    font-size:10.5px;
+    letter-spacing:.14em;
+    color:var(--label);
+    margin-bottom:14px;
+    white-space:nowrap;
+  }
+  .reg{display:flex;flex-direction:column;gap:5px}
+  .reg-label{
+    font-weight:400;
+    font-size:9.5px;
+    letter-spacing:.11em;
+    color:var(--label);
+    white-space:nowrap;
+  }
+  .reg-value{
+    font-weight:200;
+    font-size:19px;
+    line-height:1.15;
+    color:var(--stale);
+    white-space:nowrap;
+    min-height:22px;
+  }
+  .panel.live .reg-value{color:var(--ink)}
+  .panel.live .designation{color:var(--ink)}
+  .blank{
+    display:inline-block;
+    width:34px;
+    height:1px;
+    background:var(--unread);
+    vertical-align:8px;
+  }
+  @media (max-width:820px){
+    body{overflow:auto}
+    #field{
+      grid-template-columns:1fr;
+      grid-template-rows:repeat(5,auto);
+      height:auto;
+      padding:44px 26px 60px;
+      gap:44px;
+    }
+    .panel{padding-top:0 !important;padding-right:0;gap:18px}
+    .reg-value{font-size:17px}
+  }
+</style>
+</head>
+<body>
+<div id="field"></div>
+<script>
+(function(){
+  "use strict";
+
+  var t = 0;                 // substrate parameter, never displayed
+  var decayed = false;
+  var LAMBDA = Math.LN2 / 122.24;   // oxygen-15
+
+  function pad(x,n){ return x.toFixed(n); }
+
+  var clocks = [
+    {
+      name: function(){ return "caesium-133"; },
+      regs: [
+        { label:"hyperfine transition", read:function(){ return String(Math.floor(9192631770*t)); } }
+      ]
+    },
+    {
+      name: function(){ return "psr b0531+21"; },
+      regs: [
+        { label:"rotation", read:function(){ return String(Math.floor(29.6465*t)); } },
+        { label:"phase",    read:function(){ return pad((29.6465*t)%1,6); } }
+      ]
+    },
+    {
+      name: function(){ return "ephemera danica"; },
+      regs: [
+        { label:"instar",   read:function(){ return "22"; } },
+        { label:"wingbeat", read:function(){ return String(Math.floor(9.6*t)); } }
+      ]
+    },
+    {
+      name: function(){ return "pinus longaeva"; },
+      regs: [
+        { label:"ring",             read:function(){ return "4847"; } },
+        { label:"ring fraction",    read:function(){ return pad(0.6138204413 + t*3.16880878e-8,10); } },
+        { label:"tracheid, season", read:function(){ return "6"; } }
+      ]
+    },
+    {
+      name: function(){ return decayed ? "nitrogen-15" : "oxygen-15"; },
+      regs: [
+        { label:"decay", read:function(){ return decayed ? "1" : "0"; } }
+      ]
+    }
+  ];
+
+  // order and vertical placement carry no information
+  function shuffle(a){
+    for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var s=a[i]; a[i]=a[j]; a[j]=s; }
+    return a;
+  }
+  shuffle(clocks);
+  var offsets = shuffle([9,17,26,35,44]);
+
+  var field = document.getElementById("field");
+  var panels = [];
+
+  clocks.forEach(function(c,i){
+    var el = document.createElement("section");
+    el.className = "panel";
+    el.tabIndex = 0;
+    el.style.paddingTop = offsets[i] + "vh";
+
+    var d = document.createElement("div");
+    d.className = "designation";
+    d.textContent = c.name();
+    el.appendChild(d);
+
+    var vals = [];
+    c.regs.forEach(function(r){
+      var wrap = document.createElement("div"); wrap.className = "reg";
+      var lab = document.createElement("div"); lab.className = "reg-label"; lab.textContent = r.label;
+      var v = document.createElement("div"); v.className = "reg-value";
+      v.innerHTML = '<span class="blank"></span>';
+      wrap.appendChild(lab); wrap.appendChild(v); el.appendChild(wrap);
+      vals.push(v);
+    });
+
+    field.appendChild(el);
+    panels.push({ el:el, clock:c, desig:d, vals:vals });
+  });
+
+  var live = -1;
+
+  function setLive(n){
+    if(n === live) return;
+    if(live >= 0) panels[live].el.classList.remove("live");
+    live = n;
+    if(live >= 0) panels[live].el.classList.add("live");
+  }
+
+  function indexOfNode(node){
+    for(var i=0;i<panels.length;i++) if(panels[i].el === node) return i;
+    return -1;
+  }
+
+  field.addEventListener("pointermove", function(e){
+    var p = e.target.closest ? e.target.closest(".panel") : null;
+    setLive(p ? indexOfNode(p) : -1);
+  });
+  field.addEventListener("pointerdown", function(e){
+    var p = e.target.closest ? e.target.closest(".panel") : null;
+    setLive(p ? indexOfNode(p) : -1);
+  });
+  field.addEventListener("pointerleave", function(){ setLive(-1); });
+  panels.forEach(function(p,i){
+    p.el.addEventListener("focus", function(){ setLive(i); });
+    p.el.addEventListener("blur", function(){ if(live===i) setLive(-1); });
+  });
+
+  var prev = performance.now();
+
+  function frame(now){
+    var dt = (now - prev)/1000;
+    if(dt < 0) dt = 0;
+    if(dt > 60) dt = 60;
+    prev = now;
+    t += dt;
+
+    if(!decayed && Math.random() < 1 - Math.exp(-LAMBDA*dt)) decayed = true;
+
+    if(live >= 0){
+      var p = panels[live];
+      var n = p.clock.name();
+      if(p.desig.textContent !== n) p.desig.textContent = n;
+      for(var i=0;i<p.vals.length;i++){
+        var s = p.clock.regs[i].read();
+        if(p.vals[i].textContent !== s) p.vals[i].textContent = s;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+
+<div id="sg-sorties" aria-hidden="true"><a href="../ec8cd8/"></a><a href="../b858c5/"></a><a href="../4672be/"></a></div>
+<style>
+#sg-sorties{position:fixed;right:20px;bottom:18px;z-index:2147483000;display:flex;gap:9px;line-height:0}
+#sg-sorties a{display:block;width:1px;height:15px;background:currentColor;opacity:.34;cursor:pointer;
+  transition:opacity .18s linear,height .18s linear}
+#sg-sorties a:hover,#sg-sorties a:focus-visible{opacity:.85;height:21px;outline:none}
+@media (pointer:coarse){#sg-sorties a{width:2px;height:26px;padding:8px 6px;background-clip:content-box}}
+</style>
+<script>(function(){var n=document.getElementById('sg-sorties');
+function lum(el){var c=getComputedStyle(el).backgroundColor||'';var m=c.match(/[\d.]+/g);
+if(!m||m.length<3)return null;if(m.length>3&&parseFloat(m[3])<0.2)return null;
+return (0.2126*m[0]+0.7152*m[1]+0.0722*m[2])/255;}
+var l=lum(document.body);if(l===null)l=lum(document.documentElement);if(l===null)l=1;
+n.style.color=l<0.5?'#ffffff':'#000000';})();</script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mesure-qui-a-echoue</title><link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+:root{--fond:#f2f0e9;--encre:#1b1a17;--gris:#8a8375;--trait:#d6d1c4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fond);color:var(--encre);
+ font-family:'IBM Plex Mono',ui-monospace,monospace;font-weight:300;
+ font-size:13px;line-height:1.85;padding:46px 26px 90px;-webkit-font-smoothing:antialiased}
+main{max-width:600px;margin:0 auto}
+h2{font-size:13px;font-weight:400;letter-spacing:.14em;margin:0 0 30px;text-transform:lowercase}
+h3{font-size:11px;font-weight:400;letter-spacing:.14em;color:var(--gris);
+ text-transform:uppercase;margin:38px 0 12px}
+p{margin:0 0 16px}
+hr{border:0;border-top:1px solid var(--trait);margin:34px 0}
+code{font-size:12px;color:#5d574b}
+ul.i{list-style:none;padding:0;margin:0}
+ul.i li{padding:11px 0;border-bottom:1px solid var(--trait)}
+ul.i a{color:var(--encre);text-decoration:none;letter-spacing:.05em}
+ul.i a:hover{color:var(--gris)}
+.sortie{display:block;width:1px;height:15px;background:var(--encre);opacity:.34;
+ position:fixed;right:20px;bottom:18px;transition:opacity .18s,height .18s}
+.sortie:hover{opacity:.85;height:21px}
+</style></head><body><main>
+<h3>mesure qui a échoué</h3>
+<p>Il fallait relier les pièces entre elles sans les classer. Toute rubrique — par thème, par date, par difficulté — est une taxinomie posée sur des objets qui n'en veulent pas. L'idée était donc de laisser la distance se calculer sur les octets eux-mêmes : combien connaître un fichier réduit-il le coût d'encoder un autre.</p>
+<p>La première passe a échoué franchement.</p>
+<p>Le coût conditionnel brut, rapporté à la taille de la cible, fait converger tout le corpus vers le plus petit fichier. Corrélation de 0,56 avec la taille de la cible. La raison est bête : le préambule partagé — doctype, appel de fontes, motifs de feuille de style — représente une fraction d'autant plus grande que le fichier est court. La mesure ne comparait pas les pièces, elle mesurait une manière d'écrire du HTML, puis récompensait la brièveté.</p>
+<p>Deux corrections. On ne garde que le corps exécutable, préambule retiré. Et on standardise par colonne : la question n'est plus « quelle cible est facile à comprimer », mais « quelle source explique cette cible anormalement mieux que la moyenne ». La taille disparaît de l'équation.</p>
+<hr>
+<p>Le graphe qui en sort n'a pas la forme attendue.</p>
+<p>Il n'est pas fortement connexe. Un sous-ensemble de pièces forme un ensemble absorbant : on y entre, on n'en sort plus, et les autres deviennent définitivement inatteignables. Aucun chemin de retour n'existe, parce que le coût de compression conditionnelle n'est pas symétrique — savoir A aide à encoder B sans que savoir B aide autant à encoder A. La plupart des arêtes sont réciproques. Une minorité ne l'est pas, et cette minorité porte toute l'irréversibilité.</p>
+<p>Personne n'a décidé ça. C'est tombé des octets. La décision a été de ne pas le corriger : figer un piège qu'on vient de découvrir pour le préserver, ce serait le curer, c'est-à-dire refaire à la main ce que le procédé servait à éviter. Le graphe est recalculé intégralement à chaque ajout. Le piège peut se dissoudre au prochain build, se scinder, s'inverser. La sortie de vérification dira ce qu'il en reste.</p>
+<p>Le degré sortant, lui, reste à trois quel que soit le nombre de pièces. C'est la seule constante imposée de l'extérieur. À quatorze le graphe est dense ; à quarante il se fragmentera de lui-même, sans qu'on ait à le vouloir.</p>
+<hr>
+<p>Reste ce texte, et ceux qui suivront.</p>
+<p>Un texte devient glose au moment précis où il permet de parler d'une pièce sans l'avoir rencontrée. Le cartouche de musée ne complète pas le tableau : il le remplace, on repart avec une phrase et la phrase suffit. Le critère retenu est donc celui du remplaçable — ce qui donne au lecteur quelque chose à répéter est coupé, ce qui ne lui donne rien à répéter reste.</p>
+<p>D'où la règle : un texte ne nomme jamais son objet. Ni adresse, ni titre, ni nom de fichier, ni « cette pièce ». Un texte qui ne peut pas désigner ne peut pas se substituer. La règle est vérifiée à la construction, pas tenue par discipline : le build s'interrompt si un jeton de désignation apparaît.</p>
+<p>Ces textes ne sont pas datés et ne sont pas rangés dans leur ordre d'écriture. Une liste chronologique rétablirait la correspondance par simple comptage. Ils sont ordonnés par l'empreinte de leur propre contenu, qui ne transporte rien sur ce à quoi ils se rapportent.</p>
+<p>Certains n'ont pas d'objet du tout : notes pour des choses qui résistent encore à tout support, et qui ne deviendront peut-être jamais rien. Elles sont indiscernables des autres. Le lecteur ne peut donc pas seulement ignorer à quelle pièce un texte se rapporte — il ne peut pas savoir s'il se rapporte à quelque chose.</p>
+<p>Le prix est réel : beaucoup de rapprochements ne se feront pas. C'est le même prix que paie la racine en n'ayant pas d'index.</p>
+</main><a class="sortie" href="../../" aria-label=" "></a></body></html>

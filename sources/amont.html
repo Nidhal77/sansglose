@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>amont</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#e4e1d8;
+    --ink:#17150f;
+    --mid:rgba(23,21,15,.52);
+    --faint:rgba(23,21,15,.30);
+    --rule:rgba(23,21,15,.16);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--ground);color:var(--ink);
+    font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-weight:300;font-size:12px;letter-spacing:.02em;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;
+    display:flex;flex-direction:column;
+  }
+  header{
+    flex:0 0 auto;display:flex;align-items:baseline;gap:26px;
+    padding:12px 18px 10px;border-bottom:1px solid var(--rule);
+  }
+  .k{font-size:9.5px;letter-spacing:.19em;text-transform:uppercase;color:var(--faint);margin-right:.85em}
+  .v{font-weight:400;font-size:14px}
+  #alt{
+    display:flex;align-items:baseline;background:none;border:0;padding:0;
+    font:inherit;font-variant-numeric:tabular-nums;color:inherit;cursor:pointer;
+    letter-spacing:.02em;
+  }
+  #alt:hover .k,#alt:hover .v{color:var(--ink)}
+  #alt .v{border-bottom:1px solid var(--rule)}
+  #alt:focus-visible{outline:1px solid var(--ink);outline-offset:4px}
+  #stage{flex:1 1 auto;position:relative;min-height:0}
+  #field{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:crosshair}
+  footer{
+    flex:0 0 auto;padding:9px 18px 12px;
+    font-size:10px;letter-spacing:.11em;color:var(--faint);
+  }
+  @media (max-width:640px){
+    header{gap:18px;padding:10px 12px 8px}
+    footer{padding:8px 12px 10px;font-size:9.5px;letter-spacing:.07em}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span><span class="k">causes</span><span class="v" id="vc">—</span></span>
+  <button id="alt" type="button"><span class="k">même effet</span><span class="v" id="vs">—</span></button>
+</header>
+
+<div id="stage"><canvas id="field"></canvas></div>
+
+<footer>&#8593; cause &#183; &#8595; effet &#183; rangée haute&#8202;: poser</footer>
+
+<script id="core">
+/* ------------------------------------------------------------------ *
+ *  Une règle locale à cinq cellules, appliquée dans le sens
+ *  cause -> effet.  Elle n'est pas injective : l'effet se calcule,
+ *  la cause se cherche.
+ * ------------------------------------------------------------------ */
+var RULE = "01011101111110000001001001011101";
+
+function makeWorld(W){
+  var T = new Uint8Array(32);
+  for (var i = 0; i < 32; i++) T[i] = RULE.charCodeAt(i) - 48;
+
+  /* effet d'un état : immédiat, déterministe, sans reste */
+  function effect(x, out){
+    var y = out || new Uint8Array(W);
+    for (var i = 0; i < W; i++){
+      var w = 0;
+      for (var d = -2; d <= 2; d++) w = (w << 1) | x[(i + d + W) % W];
+      y[i] = T[w];
+    }
+    return y;
+  }
+
+  /* graphe de de Bruijn : sommet = (x[i-2],x[i-1],x[i],x[i+1]) */
+  var va = new Float64Array(16), vb = new Float64Array(16);
+  var suf = new Float64Array((W + 1) * 16);
+
+  function tally(y){
+    var cs = new Float64Array(16), tot = 0, v = va, w = vb;
+    for (var s = 0; s < 16; s++){
+      v.fill(0); v[s] = 1;
+      for (var i = 0; i < W; i++){
+        w.fill(0);
+        var yi = y[i];
+        for (var nd = 0; nd < 16; nd++){
+          var val = v[nd]; if (!val) continue;
+          var t2 = (nd << 1) & 15;
+          if (T[nd * 2] === yi) w[t2] += val;
+          if (T[nd * 2 + 1] === yi) w[t2 | 1] += val;
+        }
+        var tm = v; v = w; w = tm;
+      }
+      cs[s] = v[s]; tot += v[s];
+    }
+    va = v; vb = w;
+    return { cs: cs, tot: tot };
+  }
+
+  function causes(y){ return tally(y).tot; }
+
+  function fillSuffix(y, s){
+    suf.fill(0);
+    suf[W * 16 + s] = 1;
+    for (var i = W - 1; i >= 0; i--){
+      var yi = y[i], off = i * 16, off2 = (i + 1) * 16;
+      for (var nd = 0; nd < 16; nd++){
+        var acc = 0, t2 = (nd << 1) & 15;
+        if (T[nd * 2] === yi) acc += suf[off2 + t2];
+        if (T[nd * 2 + 1] === yi) acc += suf[off2 + (t2 | 1)];
+        suf[off + nd] = acc;
+      }
+    }
+  }
+
+  /* une cause tirée uniformément parmi toutes celles qui existent */
+  function aCause(y, rnd){
+    var t = tally(y);
+    if (!(t.tot > 0)) return null;
+    var r = rnd() * t.tot, S = 15;
+    for (var s = 0; s < 16; s++){ r -= t.cs[s]; if (r <= 0){ S = s; break; } }
+    fillSuffix(y, S);
+    var x = new Uint8Array(W);
+    x[(W - 2) % W] = (S >> 3) & 1;
+    x[(W - 1) % W] = (S >> 2) & 1;
+    x[0] = (S >> 1) & 1;
+    x[1 % W] = S & 1;
+    var nd = S;
+    for (var i = 0; i < W; i++){
+      var yi = y[i], t2 = (nd << 1) & 15;
+      var w0 = (T[nd * 2] === yi) ? suf[(i + 1) * 16 + t2] : 0;
+      var w1 = (T[nd * 2 + 1] === yi) ? suf[(i + 1) * 16 + (t2 | 1)] : 0;
+      var tt = w0 + w1;
+      if (!(tt > 0)) return null;
+      var c = (rnd() * tt < w0) ? 0 : 1;
+      x[(i + 2) % W] = c;
+      nd = t2 | c;
+    }
+    return x;
+  }
+
+  return { W: W, effect: effect, causes: causes, aCause: aCause };
+}
+if (typeof module !== "undefined") module.exports = { makeWorld: makeWorld, RULE: RULE };
+</script>
+
+<script>
+(function(){
+"use strict";
+
+var cv = document.getElementById("field");
+var ctx = cv.getContext("2d");
+var vc = document.getElementById("vc");
+var vs = document.getElementById("vs");
+var altBtn = document.getElementById("alt");
+
+var GUT = 40, PADR = 14, LID = 17;
+
+var world = null, W = 0, cell = 8, rowH = 8, rows = 40;
+var frontier = null, t = 0;
+var record = [];
+var nCause = 0, nSame = 0;
+var dirty = true;
+
+function rnd(){ return Math.random(); }
+
+function seed(){
+  var x = new Uint8Array(W);
+  for (var i = 0; i < W; i++) x[i] = (Math.random() * 2) | 0;
+  for (var k = 0; k < 5; k++) x = world.effect(x);
+  frontier = x; t = 0;
+}
+
+function recompute(){
+  record.length = 0;
+  var x = frontier;
+  for (var d = 0; d < rows; d++){ x = world.effect(x); record.push(x); }
+  nCause = world.causes(frontier);
+  nSame = world.causes(record[0]);
+  dirty = true;
+}
+
+/* --- gestes ------------------------------------------------------- */
+
+function toEffect(){ frontier = record[0]; t -= 1; recompute(); }
+
+function toCause(){
+  if (!(nCause > 0)) return;
+  var c = world.aCause(frontier, rnd);
+  if (!c) return;
+  frontier = c; t += 1; recompute();
+}
+
+function another(){
+  var c = world.aCause(record[0], rnd);
+  if (!c) return;
+  frontier = c; recompute();
+}
+
+/* --- mise en page -------------------------------------------------- */
+
+function layout(){
+  var r = cv.getBoundingClientRect();
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.round(r.width * dpr));
+  cv.height = Math.max(1, Math.round(r.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  var fw = Math.max(60, r.width - GUT - PADR);
+  var nw = Math.max(36, Math.min(168, Math.round(fw / 8.4)));
+  cell = fw / nw;
+  rowH = Math.max(5.4, Math.min(10, cell));
+  rows = Math.max(6, Math.floor((r.height - LID - rowH) / rowH));
+
+  if (nw !== W){
+    W = nw;
+    world = makeWorld(W);
+    seed();
+  }
+  recompute();
+}
+
+/* --- rendu --------------------------------------------------------- */
+
+function ink(a){ return "rgba(23,21,15," + a + ")"; }
+
+function drawRow(x, y, alpha){
+  var m = Math.max(2, cell * 0.72), off = (cell - m) / 2;
+  var h = Math.max(2, rowH * 0.74), voff = (rowH - h) / 2;
+  ctx.fillStyle = ink(alpha);
+  for (var i = 0; i < W; i++){
+    if (!x[i]) continue;
+    ctx.fillRect(GUT + i * cell + off, y + voff, m, h);
+  }
+}
+
+function label(y, n, alpha){
+  ctx.fillStyle = ink(alpha);
+  ctx.font = '300 9px "IBM Plex Mono", monospace';
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  var s = n < 0 ? "\u2212" + (-n) : String(n);
+  ctx.fillText(s, GUT - 10, y + rowH / 2);
+}
+
+function draw(){
+  var r = cv.getBoundingClientRect();
+  var Wd = r.width, Hd = r.height;
+  ctx.clearRect(0, 0, Wd, Hd);
+  var fw = W * cell;
+
+  /* le couvercle : présent si rien ne peut avoir causé cet état */
+  if (!(nCause > 0)){
+    ctx.fillStyle = ink(0.42);
+    ctx.fillRect(GUT, Math.round(LID * 0.47), fw, 1);
+  }
+
+  /* la rangée posée */
+  ctx.fillStyle = ink(0.045);
+  ctx.fillRect(GUT, LID, fw, rowH);
+  drawRow(frontier, LID, 0.92);
+  label(LID, t, 0.5);
+
+  ctx.fillStyle = ink(0.26);
+  ctx.fillRect(GUT, Math.round(LID + rowH) + 0.5, fw, 1);
+
+  /* ce qui s'ensuit */
+  for (var d = 0; d < rows; d++){
+    var y = LID + rowH * (d + 1) + 1;
+    if (y > Hd) break;
+    drawRow(record[d], y, 0.84);
+    var idx = t - d - 1;
+    if (idx % 5 === 0) label(y, idx, 0.26);
+  }
+}
+
+/* --- lecture ------------------------------------------------------- */
+
+function num(n){
+  var s = String(n), o = "";
+  for (var i = 0; i < s.length; i++){
+    if (i > 0 && (s.length - i) % 3 === 0) o += "\u202f";
+    o += s[i];
+  }
+  return o;
+}
+
+function readouts(){
+  vc.textContent = num(nCause);
+  vs.textContent = num(nSame);
+}
+
+/* --- entrées ------------------------------------------------------- */
+
+var painting = false, lastCell = -1, dragging = false, accum = 0, py = 0;
+
+function cellAt(px){
+  var i = Math.floor((px - GUT) / cell);
+  return (i >= 0 && i < W) ? i : -1;
+}
+
+cv.addEventListener("pointerdown", function(e){
+  var r = cv.getBoundingClientRect();
+  var x = e.clientX - r.left, y = e.clientY - r.top;
+  cv.setPointerCapture(e.pointerId);
+  if (y <= LID + Math.max(rowH, 16) + 2){
+    var i = cellAt(x);
+    if (i >= 0){
+      painting = true; lastCell = i;
+      frontier[i] ^= 1; recompute();
+      return;
+    }
+  }
+  dragging = true; py = e.clientY; accum = 0;
+});
+
+cv.addEventListener("pointermove", function(e){
+  var r = cv.getBoundingClientRect();
+  if (painting){
+    var i = cellAt(e.clientX - r.left);
+    if (i >= 0 && i !== lastCell){
+      lastCell = i;
+      frontier[i] ^= 1; recompute();
+    }
+    return;
+  }
+  if (!dragging) return;
+  accum += e.clientY - py; py = e.clientY;
+  while (accum >= rowH){ accum -= rowH; toCause(); }
+  while (accum <= -rowH){ accum += rowH; toEffect(); }
+});
+
+function release(){ painting = false; dragging = false; lastCell = -1; }
+cv.addEventListener("pointerup", release);
+cv.addEventListener("pointercancel", release);
+
+cv.addEventListener("wheel", function(e){
+  e.preventDefault();
+  var d = e.deltaY;
+  if (e.deltaMode === 1) d *= 16; else if (e.deltaMode === 2) d *= window.innerHeight;
+  accum -= d * 0.5;
+  while (accum >= rowH){ accum -= rowH; toCause(); }
+  while (accum <= -rowH){ accum += rowH; toEffect(); }
+}, { passive: false });
+
+window.addEventListener("keydown", function(e){
+  var k = e.key;
+  if (k === "ArrowUp" || k === "PageUp"){ e.preventDefault(); toCause(); }
+  else if (k === "ArrowDown" || k === "PageDown"){ e.preventDefault(); toEffect(); }
+  else if (k === " "){ e.preventDefault(); another(); }
+});
+
+altBtn.addEventListener("click", another);
+
+var rt = null;
+window.addEventListener("resize", function(){
+  clearTimeout(rt); rt = setTimeout(layout, 90);
+});
+
+/* --- boucle -------------------------------------------------------- */
+
+function frame(){
+  if (dirty){ draw(); readouts(); dirty = false; }
+  requestAnimationFrame(frame);
+}
+
+layout();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

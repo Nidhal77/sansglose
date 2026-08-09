@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>—</title>
+<style>
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:#e4e1d8;
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;
+    touch-action:none;
+    -webkit-user-select:none;user-select:none;
+  }
+  #f{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:5px;
+    width:min(96vw,1010px);
+  }
+  canvas{
+    display:block;width:100%;height:auto;
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    cursor:crosshair;
+  }
+  @media (max-aspect-ratio:1/1){
+    #f{grid-template-columns:repeat(2,1fr);width:min(94vw,94vh)}
+  }
+</style>
+</head>
+<body>
+<div id="f"></div>
+<script>
+"use strict";
+/* ------------------------------------------------------------------
+   Quatre tampons d'octets. Les octets qui sont calculés sont les
+   octets qui sont émis : il n'y a pas d'étape de rendu, pas de
+   variable interne dont l'affichage serait l'image. Rien n'est tenu
+   hors champ, donc rien ne peut tenir lieu de ce qui manque.
+
+   Trois tampons portent, pour chaque cellule, un triplet dans l'ordre
+   fixé par le quatrième. Cet ordre est une jauge : le relabelliser
+   partout ne change strictement rien à la trajectoire (vérifié).
+   Le modifier quelque part, en cours de route, en change une.
+   ------------------------------------------------------------------ */
+
+var W=96,H=96,N=W*H;
+var PERM=[0,1,2, 0,2,1, 1,0,2, 1,2,0, 2,0,1, 2,1,0];
+
+var DT=0.05, EPS=0.02, IEPS=DT/EPS, AA=0.75, BB=0.01;
+var D=4.0, DEP=4, REC=2, SUB=1;
+
+var host=document.getElementById("f");
+var cv=[],ct=[],imA=[],imB=[],A=[],B=[];
+for(var k=0;k<4;k++){
+  var c=document.createElement("canvas");
+  c.width=W;c.height=H;host.appendChild(c);
+  var g=c.getContext("2d",{willReadFrequently:true});
+  cv.push(c);ct.push(g);
+  imA.push(g.createImageData(W,H));
+  imB.push(g.createImageData(W,H));
+  A.push(imA[k].data);B.push(imB[k].data);
+}
+var P=A[3];                       /* le plan des ordres : simple, non doublé */
+
+(function init(){
+  for(var i=0;i<N;i++){
+    var o=i<<2;
+    for(var k=0;k<4;k++){A[k][o+3]=255;B[k][o+3]=255;}
+  }
+  /* ordres initiaux : partition irrégulière, aucun ordre privilégié nulle part */
+  var gr=[];for(var q0=0;q0<Math.ceil(W/8)*Math.ceil(H/8);q0++)gr.push(Math.random());
+  var NS=56,sx=[],sy=[],sp=[];
+  for(var q=0;q<NS;q++){sx.push(Math.random()*W);sy.push(Math.random()*H);sp.push((Math.random()*6)|0);}
+  for(var y=0;y<H;y++)for(var x=0;x<W;x++){
+    var i2=y*W+x,o2=i2<<2,bd=1e9,p=0;
+    for(var q2=0;q2<NS;q2++){
+      var ddx=Math.abs(sx[q2]-x); if(ddx>W/2)ddx=W-ddx;
+      var ddy=Math.abs(sy[q2]-y); if(ddy>H/2)ddy=H-ddy;
+      var dd=ddx*ddx+ddy*ddy; if(dd<bd){bd=dd;p=sp[q2];}
+    }
+    P[o2]=P[o2+1]=P[o2+2]=p*51;
+    var b0=PERM[p*3],b1=PERM[p*3+1],b2=PERM[p*3+2];
+    var gi=((y/8)|0)*Math.ceil(W/8)+((x/8)|0);
+    var u=gr[gi]<0.35?250:0;
+    var v=gr[gi]>0.60?200:0;
+    A[b0][o2]=A[b0][o2+1]=A[b0][o2+2]=u;
+    A[b1][o2]=A[b1][o2+1]=A[b1][o2+2]=v;
+    A[b2][o2]=A[b2][o2+1]=A[b2][o2+2]=235;
+  }
+  for(var s=0;s<N*0.02;s++){
+    var i3=(Math.random()*N)|0,o3=i3<<2;
+    var p3=(P[o3]/51)|0,c0=PERM[p3*3];
+    A[c0][o3]=A[c0][o3+1]=A[c0][o3+2]=250;
+  }
+})();
+
+function step(){
+  var a0=A[0],a1=A[1],a2=A[2],b0a=B[0],b1a=B[1],b2a=B[2];
+  var AR=[a0,a1,a2],BR=[b0a,b1a,b2a];
+  for(var y=0;y<H;y++){
+    var ym=((y+H-1)%H)*W, yp=((y+1)%H)*W, y0=y*W;
+    for(var x=0;x<W;x++){
+      var i=y0+x, o=i<<2;
+      var p=(P[o]/51)|0, q=p*3;
+      var k0=PERM[q],k1=PERM[q+1],k2=PERM[q+2];
+      var cb=AR[k2][o];
+      var u=AR[k0][o]/255, v=AR[k1][o]/255, g0=(cb/255)*(cb/255);
+
+      var flux=0,j,oj,pj,qj,gj,cj;
+      j=ym+x;  oj=j<<2; pj=(P[oj]/51)|0; qj=pj*3;
+      cj=AR[PERM[qj+2]][oj]/255; gj=cj*cj; if(gj>g0)gj=g0;
+      flux+=gj*(AR[PERM[qj]][oj]/255-u);
+      j=yp+x;  oj=j<<2; pj=(P[oj]/51)|0; qj=pj*3;
+      cj=AR[PERM[qj+2]][oj]/255; gj=cj*cj; if(gj>g0)gj=g0;
+      flux+=gj*(AR[PERM[qj]][oj]/255-u);
+      j=y0+((x+W-1)%W); oj=j<<2; pj=(P[oj]/51)|0; qj=pj*3;
+      cj=AR[PERM[qj+2]][oj]/255; gj=cj*cj; if(gj>g0)gj=g0;
+      flux+=gj*(AR[PERM[qj]][oj]/255-u);
+      j=y0+((x+1)%W); oj=j<<2; pj=(P[oj]/51)|0; qj=pj*3;
+      cj=AR[PERM[qj+2]][oj]/255; gj=cj*cj; if(gj>g0)gj=g0;
+      flux+=gj*(AR[PERM[qj]][oj]/255-u);
+
+      var un=u+IEPS*u*(1-u)*(u-(v+BB)/AA)+DT*D*flux;
+      var vn=v+DT*(u-v);
+      var cn=cb+(u>0.5?-DEP:REC);
+      if(un<0)un=0;else if(un>0.98)un=0.98;
+      if(vn<0)vn=0;else if(vn>1)vn=1;
+      if(cn<0)cn=0;else if(cn>255)cn=255;
+
+      var t0=BR[k0],t1=BR[k1],t2=BR[k2];
+      var w0=un*255+0.5|0, w1=vn*255+0.5|0;
+      t0[o]=t0[o+1]=t0[o+2]=w0;
+      t1[o]=t1[o+1]=t1[o+2]=w1;
+      t2[o]=t2[o+1]=t2[o+2]=cn;
+    }
+  }
+  for(var k=0;k<3;k++){
+    var ti=imA[k];imA[k]=imB[k];imB[k]=ti;
+    var td=A[k];A[k]=B[k];B[k]=td;
+  }
+}
+
+/* ---- le pointeur n'est pas un capteur : il ne dépose aucune valeur.
+       Il fait jouer aux octets déjà là un autre rôle que celui qu'ils
+       jouaient. Les quatre tampons partagent un seul réseau : le geste
+       est le même quel que soit le tampon touché. ---------------- */
+var down=false,lastc=-1;
+function cellOf(ev,c){
+  var r=c.getBoundingClientRect();
+  var x=((ev.clientX-r.left)/r.width*W)|0;
+  var y=((ev.clientY-r.top)/r.height*H)|0;
+  if(x<0)x=0;if(x>=W)x=W-1;if(y<0)y=0;if(y>=H)y=H-1;
+  return y*W+x;
+}
+function turn(ci){
+  var cx=ci%W, cy=(ci/W)|0, R=6;
+  for(var dy=-R;dy<=R;dy++)for(var dx=-R;dx<=R;dx++){
+    if(dx*dx+dy*dy>R*R)continue;
+    var o=((((cy+dy+H)%H)*W+((cx+dx+W)%W))<<2);
+    var np=(((P[o]/51)|0)+1)%6*51;
+    P[o]=P[o+1]=P[o+2]=np;
+  }
+  ct[3].putImageData(imA[3],0,0);
+}
+for(var n=0;n<4;n++)(function(c){
+  c.addEventListener("pointerdown",function(e){down=true;c.setPointerCapture(e.pointerId);lastc=cellOf(e,c);turn(lastc);e.preventDefault();});
+  c.addEventListener("pointermove",function(e){if(!down)return;var ci=cellOf(e,c);if(ci===lastc)return;lastc=ci;turn(ci);e.preventDefault();});
+  c.addEventListener("pointerup",function(){down=false;});
+  c.addEventListener("pointercancel",function(){down=false;});
+})(cv[n]);
+
+for(var w=0;w<400;w++)step();     /* le regime n'a pas de commencement à montrer */
+
+(function loop(){
+  for(var s=0;s<SUB;s++)step();
+  for(var k=0;k<3;k++)ct[k].putImageData(imA[k],0,0);
+  requestAnimationFrame(loop);
+})();
+ct[3].putImageData(imA[3],0,0);
+</script>
+
+<div id="sg-sorties" aria-hidden="true"><a href="../892f02/"></a><a href="../281963/"></a><a href="../21a503/"></a></div>
+<style>
+#sg-sorties{position:fixed;right:20px;bottom:18px;z-index:2147483000;display:flex;gap:9px;line-height:0}
+#sg-sorties a{display:block;width:1px;height:15px;background:currentColor;opacity:.34;cursor:pointer;
+  transition:opacity .18s linear,height .18s linear}
+#sg-sorties a:hover,#sg-sorties a:focus-visible{opacity:.85;height:21px;outline:none}
+@media (pointer:coarse){#sg-sorties a{width:2px;height:26px;padding:8px 6px;background-clip:content-box}}
+</style>
+<script>(function(){var n=document.getElementById('sg-sorties');
+function lum(el){var c=getComputedStyle(el).backgroundColor||'';var m=c.match(/[\d.]+/g);
+if(!m||m.length<3)return null;if(m.length>3&&parseFloat(m[3])<0.2)return null;
+return (0.2126*m[0]+0.7152*m[1]+0.0722*m[2])/255;}
+var l=lum(document.body);if(l===null)l=lum(document.documentElement);if(l===null)l=1;
+n.style.color=l<0.5?'#ffffff':'#000000';})();</script>
+</body>
+</html>

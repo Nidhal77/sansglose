@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galerie des inexposables</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --fond:#efece5;
+    --mur:#f6f4ef;
+    --trait:#cec8b9;
+    --encre:#26241f;
+    --gris:#8a8375;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--fond);
+    color:var(--encre);
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-weight:300;
+    -webkit-font-smoothing:antialiased;
+    padding:34px 30px 60px;
+  }
+  .rail{max-width:820px;margin:0 auto}
+
+  header{display:flex;justify-content:space-between;align-items:baseline;gap:20px;flex-wrap:wrap;margin-bottom:26px}
+  h1{font-size:13px;font-weight:400;letter-spacing:.16em;margin:0;text-transform:lowercase}
+  .compteurs{font-size:10.5px;letter-spacing:.06em;color:var(--gris);display:flex;gap:18px}
+  .compteurs b{font-weight:400;color:var(--encre)}
+
+  .mur{
+    display:grid;
+    grid-template-columns:repeat(8,1fr);
+    gap:7px;
+  }
+  .cadre{
+    background:var(--mur);
+    border:1px solid var(--trait);
+    aspect-ratio:1/.92;
+    display:flex;align-items:center;justify-content:center;
+    cursor:crosshair;
+    padding:6px 4px;
+    user-select:none;
+  }
+  .cadre .bits{
+    font-size:10px;
+    line-height:1.5;
+    letter-spacing:.1em;
+    white-space:pre;
+    color:var(--encre);
+    opacity:1;
+    transition:opacity .18s linear;
+  }
+  .cadre.vide .bits{opacity:0}
+
+  .pied-mur{
+    display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+    font-size:10px;letter-spacing:.06em;color:var(--gris);
+    margin-top:12px;
+  }
+
+  .registre{margin-top:46px;border-top:1px solid var(--trait);padding-top:12px}
+  .rt{display:grid;grid-template-columns:1fr 1.7fr .8fr;gap:14px;font-size:9.5px;letter-spacing:.09em;color:var(--gris);padding-bottom:8px}
+  .lignes{max-height:214px;overflow-y:auto}
+  .ligne{display:grid;grid-template-columns:1fr 1.7fr .8fr;gap:14px;font-size:10px;letter-spacing:.08em;padding:3px 0;color:var(--encre)}
+  .ligne .d{color:#5d574b;overflow:hidden;text-overflow:clip;white-space:nowrap}
+  .ligne .c{color:var(--gris)}
+  .lignes::-webkit-scrollbar{width:5px}
+  .lignes::-webkit-scrollbar-thumb{background:var(--trait)}
+
+  footer{margin-top:34px;font-size:10px;letter-spacing:.09em;color:var(--gris)}
+
+  @media (max-width:720px){
+    body{padding:26px 16px 50px}
+    .mur{grid-template-columns:repeat(6,1fr);gap:6px}
+    .cadre .bits{font-size:9px;letter-spacing:.06em}
+    .rt,.ligne{grid-template-columns:1fr 1.3fr .7fr;gap:8px}
+  }
+  @media (max-width:430px){
+    .mur{grid-template-columns:repeat(4,1fr)}
+  }
+</style>
+</head>
+<body>
+<div class="rail">
+
+  <header>
+    <h1>galerie des inexposables</h1>
+    <div class="compteurs">
+      <span>accrochées <b id="c-acc">48</b></span>
+      <span>retirées <b id="c-ret">0</b></span>
+      <span>certifiées <b id="c-cert">0</b></span>
+    </div>
+  </header>
+
+  <div class="mur" id="mur"></div>
+
+  <div class="pied-mur">
+    <span>source&nbsp;: entropie du système</span>
+    <span id="curateur">recherche&nbsp;: 0 programmes · 0 descriptions sur 1 048 576</span>
+  </div>
+
+  <section class="registre">
+    <div class="rt"><span>œuvre</span><span>description</span><span>cause</span></div>
+    <div class="lignes" id="lignes"></div>
+  </section>
+
+  <footer>Seuls les départs se démontrent.</footer>
+
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   Langage de description. Un programme est une suite de bits ; son
+   coût est sa longueur. Décodage préfixe :
+
+     00  + 5 bits L  LIT   ajoute k = L+1 bits littéraux   coût 7+k
+     01              DUP   s := s + s                      coût 2
+     100             MIR   s := s + miroir(s)              coût 3
+     101             NEG   s := s + complément(s)           coût 3
+     110 + 3 bits    RPT   recopie les k derniers bits     coût 6
+     1110 + 3 bits   POP   retire les k derniers bits      coût 7
+     11110           CUT   garde la première moitié        coût 5
+     11111           BCL   répète le reste jusqu'à ce que
+                           le dernier bit vaille 1
+
+   BCL rend l'arrêt indécidable : certains programmes courts ne
+   rendent jamais la main. On ne peut donc jamais clore un niveau.
+------------------------------------------------------------------ */
+
+const N = 20;                  // longueur d'une œuvre
+const MAXLEN = 72;             // butée de l'accumulateur
+const TRIVIAL = 7 + N;         // 27 bits : le relevé d'une œuvre
+const CADRES = 48;             // ⌈log2 48⌉ = 6 bits pour désigner
+const ADR = 6;
+
+function exec(bits, n, budget){
+  let i=0, s=[], steps=0, boucle=-1;
+  for(;;){
+    if(i>=n){
+      if(boucle>=0){
+        if(s.length && s[s.length-1]===1) return s;
+        if(++steps>budget) return null;
+        i=boucle; continue;
+      }
+      return s;
+    }
+    if(++steps>budget) return null;
+    const b0=bits[i++];
+    if(b0===0){
+      if(i>=n) return null;
+      if(bits[i++]===0){
+        if(i+5>n) return null;
+        let L=0; for(let j=0;j<5;j++) L=L*2+bits[i++];
+        const k=L+1;
+        if(i+k>n) return null;
+        if(s.length+k>MAXLEN) return null;
+        for(let j=0;j<k;j++) s.push(bits[i++]);
+      } else {
+        if(s.length*2>MAXLEN) return null;
+        s=s.concat(s);
+      }
+    } else {
+      if(i>=n) return null;
+      const b1=bits[i++];
+      if(b1===0){
+        if(i>=n) return null;
+        const b2=bits[i++];
+        if(s.length*2>MAXLEN) return null;
+        if(b2===0){ const r=s.slice().reverse(); s=s.concat(r); }
+        else { s=s.concat(s.map(x=>1-x)); }
+      } else {
+        if(i>=n) return null;
+        const b2=bits[i++];
+        if(b2===0){
+          if(i+3>n) return null;
+          let k=0; for(let j=0;j<3;j++) k=k*2+bits[i++]; k+=1;
+          if(s.length<k || s.length+k>MAXLEN) return null;
+          s=s.concat(s.slice(s.length-k));
+        } else {
+          if(i>=n) return null;
+          const b3=bits[i++];
+          if(b3===0){
+            if(i+3>n) return null;
+            let k=0; for(let j=0;j<3;j++) k=k*2+bits[i++]; k+=1;
+            if(s.length<k) return null;
+            s=s.slice(0,s.length-k);
+          } else {
+            if(i>=n) return null;
+            const b4=bits[i++];
+            if(b4===0){ if(s.length<2) return null; s=s.slice(0,Math.ceil(s.length/2)); }
+            else { if(boucle>=0) return null; boucle=i; }
+          }
+        }
+      }
+    }
+  }
+}
+
+/* relevé : LIT de N bits. C'est tout ce qu'on peut accrocher. */
+function releve(x){
+  const L=N-1, b=[0,0];
+  for(let j=4;j>=0;j--) b.push((L>>j)&1);
+  return b.concat(x);
+}
+
+function tirage(){
+  const u=new Uint32Array(1);
+  crypto.getRandomValues(u);
+  return u[0] & ((1<<N)-1);
+}
+function versBits(v,len){
+  const a=[]; for(let j=len-1;j>=0;j--) a.push((v>>j)&1); return a;
+}
+function texte(a){ return a.join(''); }
+function pave(a,parLigne){
+  let o=''; for(let i=0;i<a.length;i+=parLigne){ if(i) o+='\n'; o+=a.slice(i,i+parLigne).join(''); }
+  return o;
+}
+const fmt = n => n.toLocaleString('fr-FR');
+
+/* ---------------- salle ---------------- */
+
+const mur=document.getElementById('mur');
+const lignes=document.getElementById('lignes');
+const cRet=document.getElementById('c-ret');
+const cAcc=document.getElementById('c-acc');
+const curLigne=document.getElementById('curateur');
+
+const descriptions=new Map();   // œuvre -> bits du plus court programme connu
+const oeuvres=new Array(CADRES).fill(null);   // valeurs entières
+const cadres=[];
+let retirees=0;
+function majAcc(){ cAcc.textContent=oeuvres.reduce((n,o)=>n+(o!==null?1:0),0); }
+
+for(let i=0;i<CADRES;i++){
+  const d=document.createElement('div');
+  d.className='cadre';
+  const s=document.createElement('span');
+  s.className='bits';
+  d.appendChild(s);
+  d.addEventListener('click',()=>designer(i));
+  mur.appendChild(d);
+  cadres.push(d);
+}
+
+const surLeMur=new Set();
+
+function accrocher(i){
+  let v;
+  do { v=tirage(); } while(surLeMur.has(v));
+  oeuvres[i]=v;
+  surLeMur.add(v);
+  const p=releve(versBits(v,N));
+  cadres[i].classList.remove('vide');
+  cadres[i].querySelector('.bits').textContent=pave(p,9);
+  majAcc();
+  // une œuvre déjà décrite ne tient pas au mur
+  const d=descriptions.get(v);
+  if(d) setTimeout(()=>retirer(i,d,'curateur'),900+Math.random()*700);
+}
+
+function retirer(i,descBits,cause){
+  const v=oeuvres[i];
+  if(v===null) return;
+  oeuvres[i]=null;
+  surLeMur.delete(v);
+  cadres[i].classList.add('vide');
+  majAcc();
+  inscrire(v,descBits,cause);
+  retirees++; cRet.textContent=fmt(retirees);
+  setTimeout(()=>accrocher(i),620);
+}
+
+function designer(i){
+  if(oeuvres[i]===null) return;
+  retirer(i, texte(versBits(i,ADR)), 'désignation');
+}
+
+function inscrire(v,descBits,cause){
+  const l=document.createElement('div');
+  l.className='ligne';
+  const a=document.createElement('span'); a.textContent=texte(versBits(v,N));
+  const b=document.createElement('span'); b.className='d';
+  b.textContent=descBits+'  '+descBits.length+' b';
+  const c=document.createElement('span'); c.className='c'; c.textContent=cause;
+  l.appendChild(a); l.appendChild(b); l.appendChild(c);
+  lignes.insertBefore(l,lignes.firstChild);
+  while(lignes.children.length>140) lignes.removeChild(lignes.lastChild);
+}
+
+for(let i=0;i<CADRES;i++) accrocher(i);
+
+/* ---------------- le curateur ---------------- */
+/* Il énumère les programmes par longueur croissante et exécute
+   chacun un nombre borné de pas. Il n'établit jamais qu'une œuvre
+   n'a pas de description courte : il ne fait que trouver, parfois. */
+
+let essayes=0;
+let c=1, v=0, budget=48;
+const PLAFOND=TRIVIAL-1;        // au-delà, un programme est plus long que le relevé
+const tampon=new Uint8Array(PLAFOND+2);
+
+function tour(){
+  const t0=performance.now();
+  while(performance.now()-t0<5){
+    for(let n=0;n<400;n++){
+      const lim=Math.pow(2,c);
+      if(v>=lim){
+        c++;
+        if(c>PLAFOND){ c=1; budget+=32; }
+        v=0;
+        continue;
+      }
+      for(let j=0;j<c;j++) tampon[j]=(v>>(c-1-j))&1;
+      v++;
+      essayes++;
+      const out=exec(tampon,c,budget);
+      if(out && out.length===N){
+        let idx=0; for(let j=0;j<N;j++) idx=idx*2+out[j];
+        if(!descriptions.has(idx)){
+          const bits=[]; for(let j=0;j<c;j++) bits.push(tampon[j]);
+          descriptions.set(idx,texte(bits));
+          const k=oeuvres.indexOf(idx);
+          if(k>=0) retirer(k,texte(bits),'curateur');
+        }
+      }
+    }
+  }
+  curLigne.textContent='recherche\u00a0: '+fmt(essayes)+' programmes · '
+    +fmt(descriptions.size)+' descriptions sur '+fmt(Math.pow(2,N));
+  requestAnimationFrame(tour);
+}
+requestAnimationFrame(tour);
+</script>
+</body>
+</html>

@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dépôt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@200;400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#DCE0DE;
+    --ink:#0F1513;
+    --stale:#8E9793;
+    --label:#A3ABA7;
+    --unread:#B6BDB9;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--ground);
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    touch-action:none;
+    color:var(--ink);
+  }
+  #wrap{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%}
+  #ctl{
+    position:fixed;
+    left:0;right:0;bottom:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:22px;
+    padding:0 0 26px 0;
+    pointer-events:none;
+  }
+  #adv{
+    pointer-events:auto;
+    font-family:inherit;
+    font-size:10px;
+    font-weight:400;
+    letter-spacing:.18em;
+    color:var(--stale);
+    background:transparent;
+    border:1px solid var(--unread);
+    padding:9px 26px;
+    cursor:pointer;
+    user-select:none;
+    -webkit-user-select:none;
+    outline:none;
+    transition:color .25s,border-color .25s;
+  }
+  #adv:hover{color:var(--ink);border-color:var(--stale)}
+  #adv.on{color:var(--ink);border-color:var(--ink)}
+  #adv:disabled{color:var(--unread);border-color:var(--unread);cursor:default}
+  #note{
+    pointer-events:none;
+    font-size:9.5px;
+    letter-spacing:.11em;
+    color:var(--label);
+    font-weight:400;
+  }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="ctl">
+  <button id="adv">AVANCER</button>
+  <span id="note">l'avance est irréversible</span>
+</div>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------
+   DÉPÔT — coupe et simulation
+   Géométrie en millimètres réels, cotes issues de la spécification.
+   ------------------------------------------------------------------ */
+
+const G = {
+  grade:        0,
+  probeTip:     600,     // profondeur de la sonde
+  bulbH:        130,
+  bulbD:        70,
+  monoTop:      690,
+  monoH:        800,
+  monoW:        700,
+  // cavité mécanisme, profondeurs sous le sol
+  diaphTop:     715,
+  diaphH:       58,
+  diaphD:       92,
+  magTop:       785,
+  magH:         81,
+  magD:         60,
+  wheelTop:     876,
+  wheelH:       16,
+  wheelD:       70,
+  pitchR:       30,
+  chuteH:       180,
+  chamTop:      1072,
+  chamH:        120,
+  chamD:        60,
+  pockets:      20,
+  total:        10000,
+  transitSteps: 10       // logettes entre l'orifice de charge et l'orifice de chute
+};
+
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const btn = document.getElementById('adv');
+const note= document.getElementById('note');
+
+let W=0,H=0,DPR=1;
+let hatch=null;                      // motif hachure terre
+let stip =null;                      // motif granite
+
+/* ---------- état ---------- */
+let p        = 0;        // cycles écoulés (continu, pic thermique aux entiers)
+let holding  = false;
+let holdT    = 0;
+let last     = performance.now();
+const REALRATE = 1/(365.25*24*3600);  // cycles par seconde réelle
+
+/* ---------- utilitaires ---------- */
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+let C={};
+function readColors(){
+  C={ground:css('--ground'),ink:css('--ink'),stale:css('--stale'),label:css('--label'),unread:css('--unread')};
+}
+
+function makePatterns(){
+  // hachure terre
+  const a=document.createElement('canvas'); a.width=a.height=8;
+  const ax=a.getContext('2d');
+  ax.strokeStyle=C.unread; ax.lineWidth=.6;
+  ax.beginPath(); ax.moveTo(-2,10); ax.lineTo(10,-2); ax.stroke();
+  ax.beginPath(); ax.moveTo(-2,18); ax.lineTo(18,-2); ax.stroke();
+  hatch=ctx.createPattern(a,'repeat');
+  // granite : moucheture
+  const b=document.createElement('canvas'); b.width=b.height=14;
+  const bx=b.getContext('2d');
+  bx.fillStyle=C.unread;
+  const pts=[[2,3],[7,1],[11,5],[4,9],[9,11],[13,8],[1,12],[6,6]];
+  for(const [x,y] of pts){bx.fillRect(x,y,1,1);}
+  stip=ctx.createPattern(b,'repeat');
+}
+
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=cv.clientWidth; H=cv.clientHeight;
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  readColors(); makePatterns();
+}
+window.addEventListener('resize',resize);
+
+/* ---------- inventaire ---------- */
+function inventory(){
+  const steps  = Math.floor(p);
+  const taken  = clamp(steps,0,G.total);
+  const fallen = clamp(steps-G.transitSteps,0,G.total);
+  return {
+    steps,
+    remaining: G.total-taken,
+    transit:   taken-fallen,
+    fallen,
+    done: fallen>=G.total
+  };
+}
+
+/* ---------- primitives de dessin technique ---------- */
+function line(x1,y1,x2,y2,col,w){
+  ctx.strokeStyle=col; ctx.lineWidth=w||.7;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+}
+function dash(x1,y1,x2,y2,col){
+  ctx.save(); ctx.setLineDash([3,3]); line(x1,y1,x2,y2,col,.6); ctx.restore();
+}
+function txt(s,x,y,col,size,align,ls){
+  ctx.fillStyle=col;
+  ctx.font=(size<=10?'400 ':'400 ')+(size||10)+'px "IBM Plex Mono",monospace';
+  ctx.textAlign=align||'left'; ctx.textBaseline='middle';
+  if(ls){
+    let cx=x;
+    const total=[...s].reduce((a,ch)=>a+ctx.measureText(ch).width+ls,0)-ls;
+    if(align==='center')cx=x-total/2; else if(align==='right')cx=x-total;
+    ctx.textAlign='left';
+    for(const ch of s){ctx.fillText(ch,cx,y); cx+=ctx.measureText(ch).width+ls;}
+  } else {
+    ctx.fillText(s,x,y);
+  }
+}
+function leader(x1,y1,x2,y2,s,side){
+  line(x1,y1,x2,y2,C.unread,.6);
+  ctx.fillStyle=C.unread;
+  ctx.beginPath(); ctx.arc(x1,y1,1.3,0,7); ctx.fill();
+  txt(s,x2+(side==='r'?5:-5),y2,C.label,9,side==='r'?'left':'right',.9);
+}
+function dimV(x,y1,y2,s){
+  line(x,y1,x,y2,C.unread,.55);
+  line(x-3,y1,x+3,y1,C.unread,.55);
+  line(x-3,y2,x+3,y2,C.unread,.55);
+  ctx.save();
+  ctx.translate(x-4,(y1+y2)/2); ctx.rotate(-Math.PI/2);
+  txt(s,0,0,C.label,8.5,'center',.7);
+  ctx.restore();
+}
+
+/* ==================================================================
+   PANNEAU GAUCHE — coupe générale
+   ================================================================== */
+function drawSection(x0,y0,w,h){
+  const depthMax=1600;
+  const s=Math.min(h/depthMax, w/810);
+  const cx=x0+w/2;
+  const yc=y0+(h-depthMax*s)/2;
+  const D=d=>yc+d*s;
+  const mw=G.monoW*s, mx=cx-mw/2;
+
+  txt('COUPE GÉNÉRALE',x0,y0-26,C.stale,10,'left',1.6);
+  txt('cotes en mm',x0,y0-12,C.label,8.5,'left',.8);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0,D(0),w,D(depthMax)-D(0)); ctx.clip();
+  ctx.fillStyle=hatch; ctx.fillRect(x0,D(0),w,h);
+  ctx.restore();
+
+  line(x0,D(0),x0+w,D(0),C.ink,1);
+  for(let i=0;i<6;i++){const xx=x0+4+i*(w-8)/5; line(xx,D(0),xx-5,D(0)-6,C.stale,.6);}
+  txt('SOL FINI',x0+w,D(0)-11,C.label,8.5,'right',.9);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(mx,D(G.monoTop),mw,G.monoH*s); ctx.clip();
+  ctx.fillStyle=C.ground; ctx.fillRect(mx,D(G.monoTop),mw,G.monoH*s);
+  ctx.fillStyle=stip;     ctx.fillRect(mx,D(G.monoTop),mw,G.monoH*s);
+  ctx.restore();
+  ctx.strokeStyle=C.ink; ctx.lineWidth=1; ctx.strokeRect(mx,D(G.monoTop),mw,G.monoH*s);
+
+  const gy=D(G.monoTop+G.monoH);
+  for(let i=0;i<20;i++){
+    const gx=mx-3+i*(mw+6)/19;
+    ctx.strokeStyle=C.stale; ctx.lineWidth=.55;
+    ctx.beginPath(); ctx.arc(gx,gy+3+((i*7)%5)*.7,1,0,7); ctx.stroke();
+  }
+
+  // sonde
+  const T=-Math.cos(2*Math.PI*p);
+  const bw=G.bulbD*s;
+  line(cx,D(G.probeTip-G.bulbH),cx,D(G.monoTop),C.ink,.85);
+  ctx.fillStyle=C.ground; ctx.fillRect(cx-bw/2,D(G.probeTip-G.bulbH),bw,G.bulbH*s);
+  ctx.strokeStyle=C.ink; ctx.lineWidth=.85;
+  ctx.strokeRect(cx-bw/2,D(G.probeTip-G.bulbH),bw,G.bulbH*s);
+  const fl=D(G.probeTip)-(G.bulbH*s)*(0.55+0.3*T);
+  ctx.fillStyle=C.unread; ctx.fillRect(cx-bw/2+1,fl,bw-2,D(G.probeTip)-fl-1);
+  txt('SONDE',cx+bw/2+7,D(G.probeTip-G.bulbH)-3,C.label,8.5,'left',.9);
+
+  // enveloppe du mécanisme -> renvoi au détail
+  ctx.save(); ctx.setLineDash([2,3]);
+  ctx.strokeStyle=C.stale; ctx.lineWidth=.7;
+  ctx.strokeRect(mx+mw*0.16,D(G.diaphTop-14),mw*0.68,(G.chamTop+G.chamH+14-G.diaphTop)*s);
+  ctx.restore();
+  txt('DÉTAIL',mx+mw+8,D(G.diaphTop+150),C.label,8.5,'left',.9);
+
+  dimV(mx-18,D(0),D(G.probeTip),'600');
+  dimV(mx-18,D(G.monoTop),D(G.monoTop+G.monoH),'800');
+  txt('GRANITE MONOLITHIQUE',cx,D(G.monoTop+G.monoH)+20,C.label,8.5,'center',1);
+  txt('700',mx+mw*0.72,D(G.monoTop)-9,C.label,8.5,'center',.8);
+}
+
+/* ------------------ DÉTAIL DU MÉCANISME ------------------ */
+function drawDetail(x0,y0,w,h){
+  const d0=G.diaphTop-26, d1=G.chamTop+G.chamH+26;
+  const s=Math.min(h/(d1-d0), w/290);
+  const cx=x0+w*0.44;
+  const yc=y0+(h-(d1-d0)*s)/2;
+  const D=d=>yc+(d-d0)*s;
+  const inv=inventory();
+  const T=-Math.cos(2*Math.PI*p);
+  const off=G.pitchR*s;
+
+  txt('DÉTAIL DU MÉCANISME',x0,y0-26,C.stale,10,'left',1.6);
+  txt('cotes en mm',x0,y0-12,C.label,8.5,'left',.8);
+
+  // chambre membrane
+  const dw=G.diaphD*s;
+  ctx.fillStyle=C.ground; ctx.fillRect(cx-dw/2,D(G.diaphTop),dw,G.diaphH*s);
+  ctx.strokeStyle=C.ink; ctx.lineWidth=.9; ctx.strokeRect(cx-dw/2,D(G.diaphTop),dw,G.diaphH*s);
+  const my=D(G.diaphTop+G.diaphH*0.60)+(G.diaphH*s*0.13)*T;
+  const bulge=Math.max(-(G.diaphH*s*0.30),Math.min(G.diaphH*s*0.16, -T*G.diaphH*s*0.24));
+  ctx.strokeStyle=C.ink; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(cx-dw/2+2,my);
+  ctx.bezierCurveTo(cx-dw/4,my+bulge,cx+dw/4,my+bulge,cx+dw/2-2,my); ctx.stroke();
+  leader(cx+dw/2,D(G.diaphTop+G.diaphH*0.3),x0+w-6,D(G.diaphTop-4),'MEMBRANE Pt-Ir','r');
+  txt('⌀92',cx,D(G.diaphTop)-9,C.label,8.5,'center',.8);
+
+  // tige de poussée
+  line(cx+off,my+2,cx+off,D(G.wheelTop),C.ink,1);
+  leader(cx+off,D(G.magTop+18),x0+w-6,D(G.magTop-6),'TIGE DE POUSSÉE','r');
+
+  // magasin
+  const gw=G.magD*s, gx0=cx-off-gw/2;
+  ctx.fillStyle=C.ground; ctx.fillRect(gx0,D(G.magTop),gw,G.magH*s);
+  const fh=G.magH*s*(inv.remaining/G.total);
+  ctx.fillStyle=C.unread; ctx.fillRect(gx0+1,D(G.magTop+G.magH)-fh,gw-2,fh);
+  // billes discrètes en haut du tas
+  if(inv.remaining>0){
+    const top=D(G.magTop+G.magH)-fh;
+    ctx.strokeStyle=C.stale; ctx.lineWidth=.5;
+    for(let r=0;r<2;r++)for(let i=0;i<6;i++){
+      const bx2=gx0+5+i*(gw-10)/5+(r%2)*2.4, by=top+3+r*4.4;
+      if(by<D(G.magTop+G.magH)-1){ctx.beginPath();ctx.arc(bx2,by,1.7,0,7);ctx.stroke();}
+    }
+  }
+  ctx.strokeStyle=C.ink; ctx.lineWidth=.9; ctx.strokeRect(gx0,D(G.magTop),gw,G.magH*s);
+  txt('MAGASIN',gx0-12,D(G.magTop)+9,C.label,8.5,'right',.9);
+  txt(inv.remaining.toLocaleString('fr-FR'),gx0+gw/2,D(G.magTop+G.magH)+11,C.stale,9,'center',.8);
+  dimV(gx0-16,D(G.magTop),D(G.magTop+G.magH),'81');
+
+  // gorge d'alimentation
+  line(gx0+gw/2-2,D(G.magTop+G.magH),gx0+gw/2-2,D(G.wheelTop),C.ink,.8);
+  line(gx0+gw/2+2,D(G.magTop+G.magH),gx0+gw/2+2,D(G.wheelTop),C.ink,.8);
+
+  // barillet
+  const ww=G.wheelD*s;
+  ctx.fillStyle=C.ground; ctx.fillRect(cx-ww/2,D(G.wheelTop),ww,G.wheelH*s);
+  ctx.strokeStyle=C.ink; ctx.lineWidth=1.1; ctx.strokeRect(cx-ww/2,D(G.wheelTop),ww,G.wheelH*s);
+  // deux loges vues en coupe
+  for(const sx of [-off,off]){
+    ctx.strokeStyle=C.ink; ctx.lineWidth=.7;
+    ctx.strokeRect(cx+sx-2.6,D(G.wheelTop)+1.5,5.2,G.wheelH*s-3);
+  }
+  leader(cx+ww/2,D(G.wheelTop+G.wheelH/2),x0+w-6,D(G.wheelTop+40),'BARILLET ⌀70','r');
+  // cliquet
+  ctx.strokeStyle=C.stale; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(cx+ww/2+26,D(G.wheelTop)+2+T*3);
+  ctx.lineTo(cx+ww/2+3,D(G.wheelTop+G.wheelH/2)+T*3); ctx.stroke();
+
+  // chute
+  const chx=cx+off;
+  dash(chx-4,D(G.wheelTop+G.wheelH),chx-4,D(G.chamTop),C.unread);
+  dash(chx+4,D(G.wheelTop+G.wheelH),chx+4,D(G.chamTop),C.unread);
+  dimV(cx-off-24,D(G.wheelTop+G.wheelH),D(G.chamTop),'180');
+  const frac=p-Math.floor(p);
+  if(p>=G.transitSteps+1 && inv.fallen<G.total && frac<0.4){
+    const t=frac/0.4;
+    ctx.fillStyle=C.ink;
+    ctx.beginPath();
+    ctx.arc(chx,D(G.wheelTop+G.wheelH)+(D(G.chamTop)-D(G.wheelTop+G.wheelH))*(t*t),2.6,0,7);
+    ctx.fill();
+  }
+
+  // chambre
+  const aw=G.chamD*s, ax0=chx-aw/2;
+  ctx.fillStyle=C.ground; ctx.fillRect(ax0,D(G.chamTop),aw,G.chamH*s);
+  const ah=G.chamH*s*(inv.fallen/G.total)*0.86;
+  ctx.save(); ctx.globalAlpha=.34; ctx.fillStyle=C.ink;
+  ctx.fillRect(ax0+1,D(G.chamTop+G.chamH)-ah,aw-2,ah); ctx.restore();
+  ctx.strokeStyle=C.ink; ctx.lineWidth=.9; ctx.strokeRect(ax0,D(G.chamTop),aw,G.chamH*s);
+  line(ax0,D(G.chamTop),ax0+aw,D(G.chamTop),C.ink,2);
+  leader(ax0+aw,D(G.chamTop+G.chamH*0.55),x0+w-6,D(G.chamTop+66),'CHAMBRE SCELLÉE','r');
+  txt(inv.fallen.toLocaleString('fr-FR'),ax0+aw/2,D(G.chamTop+G.chamH)+11,C.stale,9,'center',.8);
+  txt('BOUCHON SILICE',ax0-6,D(G.chamTop)-1,C.label,8.5,'right',.9);
+}
+
+/* ==================================================================
+   PANNEAU DROIT — barillet, vue en plan
+   ================================================================== */
+function drawWheel(cx,cy,R){
+  txt('BARILLET — VUE EN PLAN',cx-R,cy-R-30,C.stale,10,'left',1.6);
+  txt('20 loges · 18° par cycle',cx-R,cy-R-16,C.label,8.5,'left',.8);
+
+  const inv=inventory();
+  const ang=p*(2*Math.PI/G.pockets);
+  const pr=R*0.72;                       // rayon primitif des loges
+
+  // corps
+  ctx.strokeStyle=C.ink; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke();
+  ctx.strokeStyle=C.unread; ctx.lineWidth=.6;
+  ctx.beginPath(); ctx.arc(cx,cy,pr,0,7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,R*0.14,0,7); ctx.stroke();
+
+  // orifices fixes
+  const feedA=-Math.PI/2, dropA=Math.PI/2;
+  for(const [a,lab,fill] of [[feedA,'CHARGE',false],[dropA,'CHUTE',true]]){
+    const ox=cx+Math.cos(a)*pr, oy=cy+Math.sin(a)*pr;
+    ctx.strokeStyle=C.ink; ctx.lineWidth=1.1;
+    ctx.beginPath(); ctx.arc(ox,oy,R*0.085,0,7); ctx.stroke();
+    if(fill){ctx.strokeStyle=C.stale;ctx.lineWidth=.6;
+      ctx.beginPath();ctx.arc(ox,oy,R*0.125,0,7);ctx.stroke();}
+    txt(lab,ox,oy+(a===feedA?-R*0.19:R*0.19),C.label,8.5,'center',1);
+  }
+
+  // loges
+  for(let k=0;k<G.pockets;k++){
+    const a=ang+k*(2*Math.PI/G.pockets)-Math.PI/2;
+    const px=cx+Math.cos(a)*pr, py=cy+Math.sin(a)*pr;
+    // charge quand k+p ≡ 0 (mod 20) au passage de l'orifice CHARGE
+    let s=((Math.floor(p)+k)%G.pockets+G.pockets)%G.pockets;
+    const loaded = s<G.transitSteps
+                && Math.floor(p)>=1
+                && (Math.floor(p)-s)<=G.total
+                && inv.transit>0;
+    ctx.strokeStyle=loaded?C.ink:C.unread;
+    ctx.lineWidth=loaded?.9:.6;
+    ctx.beginPath(); ctx.arc(px,py,R*0.055,0,7); ctx.stroke();
+    if(loaded){ctx.fillStyle=C.ink;ctx.beginPath();ctx.arc(px,py,R*0.036,0,7);ctx.fill();}
+  }
+
+  // cliquet
+  const T=-Math.cos(2*Math.PI*p);
+  const pawlA=0;
+  const pox=cx+Math.cos(pawlA)*(R*1.02), poy=cy+Math.sin(pawlA)*(R*1.02);
+  ctx.strokeStyle=C.stale; ctx.lineWidth=1.2;
+  ctx.beginPath();
+  ctx.moveTo(pox+R*0.30,poy-R*0.10+T*R*0.045);
+  ctx.lineTo(pox+R*0.03,poy+T*R*0.045);
+  ctx.stroke();
+
+  // denture
+  ctx.strokeStyle=C.unread; ctx.lineWidth=.55;
+  for(let k=0;k<G.pockets;k++){
+    const a=ang+k*(2*Math.PI/G.pockets);
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);
+    ctx.lineTo(cx+Math.cos(a)*R*0.9,cy+Math.sin(a)*R*0.9);
+    ctx.stroke();
+  }
+
+  txt('transit charge → chute : 10 cycles',cx-R,cy+R+26,C.label,8.5,'left',.8);
+}
+
+/* ==================================================================
+   TRACÉ THERMIQUE + REGISTRES
+   ================================================================== */
+function drawTrace(x0,y0,w,h){
+  txt('SONDE · 600 mm',x0,y0-16,C.stale,10,'left',1.6);
+  const span=3.2;                       // cycles affichés
+  const mid=y0+h/2;
+  line(x0,mid,x0+w,mid,C.unread,.5);
+  ctx.strokeStyle=C.ink; ctx.lineWidth=.9;
+  ctx.beginPath();
+  for(let i=0;i<=260;i++){
+    const q=p-span+ (i/260)*span;
+    const v=-Math.cos(2*Math.PI*q);
+    const xx=x0+(i/260)*w, yy=mid-v*(h*0.40);
+    i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);
+  }
+  ctx.stroke();
+  // pics = indexations
+  for(let n=Math.ceil(p-span);n<=Math.floor(p);n++){
+    if(n<0)continue;
+    const xx=x0+((n-(p-span))/span)*w;
+    dash(xx,y0,xx,y0+h,C.unread);
+  }
+  line(x0+w,y0,x0+w,y0+h,C.stale,.7);
+  txt('+8.4 K',x0+w+7,mid-h*0.40,C.label,8.5,'left',.8);
+  txt('−8.4 K',x0+w+7,mid+h*0.40,C.label,8.5,'left',.8);
+}
+
+function drawRegisters(x0,y0,gap){
+  const inv=inventory();
+  const rows=[
+    ['CYCLES',      inv.steps.toLocaleString('fr-FR')],
+    ['MAGASIN',     inv.remaining.toLocaleString('fr-FR')],
+    ['EN TRANSIT',  String(inv.transit)],
+    ['DÉPOSÉES',    inv.fallen.toLocaleString('fr-FR')]
+  ];
+  let y=y0;
+  for(const [k,v] of rows){
+    txt(k,x0,y,C.label,9,'left',1.1);
+    ctx.font='200 21px "IBM Plex Mono",monospace';
+    ctx.fillStyle=inv.done&&k==='DÉPOSÉES'?C.ink:C.ink;
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(v,x0,y+20);
+    y+=gap;
+  }
+  const rate = holding ? currentRate() : REALRATE;
+  txt(holding?'AVANCE':'TEMPS RÉEL',x0,y+2,C.label,9,'left',1.1);
+  ctx.font='200 13px "IBM Plex Mono",monospace';
+  ctx.fillStyle=C.stale;
+  ctx.fillText(rate<1e-3? rate.toExponential(1)+' cyc/s'
+                        : rate.toFixed(1)+' cyc/s', x0, y+19);
+}
+
+/* ==================================================================
+   BOUCLE
+   ================================================================== */
+function currentRate(){
+  return Math.min(0.6*(1+holdT*holdT*4), 260);
+}
+
+function frame(now){
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  const inv0=inventory();
+  if(holding && !inv0.done){
+    holdT+=dt;
+    p+=currentRate()*dt;
+    if(inventory().fallen>=G.total){
+      p=G.total+G.transitSteps;
+      holding=false; btn.classList.remove('on');
+      btn.disabled=true; btn.textContent='ÉPUISÉ';
+      note.textContent='10 000 déposées · le magasin est vide';
+    }
+  } else {
+    p+=REALRATE*dt;
+  }
+
+  ctx.clearRect(0,0,W,H);
+
+  const isNarrow = W<980;
+  const padT=64, padB=104;
+  const availH=H-padT-padB;
+
+  if(isNarrow){
+    const detW=Math.min(W*0.46,270);
+    drawDetail(26,padT,detW,availH*0.94);
+    const rx=26+detW+150;
+    const R=Math.min((W-rx-26)*0.42, availH*0.185);
+    drawWheel(rx+R+4,padT+R+46,R);
+    drawRegisters(rx, padT+2*R+108, 46);
+  } else {
+    const secW=Math.min(W*0.16,210);
+    drawSection(48,padT,secW,availH);
+    const detX=48+secW+56, detW=Math.min(W*0.23,310);
+    drawDetail(detX,padT,detW,availH*0.97);
+    const rx=detX+detW+132;
+    const rw=W-rx-48;
+    const R=Math.min(rw*0.24, availH*0.24);
+    const wcx=rx+R+10;
+    drawWheel(wcx,padT+R+68,R);
+    drawRegisters(wcx+R+80, padT+50, 60);
+    drawTrace(rx, padT+2*R+206, Math.min(rw-170,400), 74);
+  }
+
+  requestAnimationFrame(frame);
+}
+
+/* ---------- entrées ---------- */
+function down(e){ if(btn.disabled)return; holding=true; holdT=0; btn.classList.add('on'); e.preventDefault(); }
+function up(){ holding=false; holdT=0; btn.classList.remove('on'); }
+btn.addEventListener('pointerdown',down);
+window.addEventListener('pointerup',up);
+window.addEventListener('pointercancel',up);
+btn.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&!e.repeat)down(e);});
+btn.addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter')up();});
+
+resize();
+requestAnimationFrame(frame);
+</script>
+
+<div id="sg-sorties" aria-hidden="true"><a href="../21a503/"></a><a href="../a94d2b/"></a><a href="../281963/"></a></div>
+<style>
+#sg-sorties{position:fixed;right:20px;bottom:18px;z-index:2147483000;display:flex;gap:9px;line-height:0}
+#sg-sorties a{display:block;width:1px;height:15px;background:currentColor;opacity:.34;cursor:pointer;
+  transition:opacity .18s linear,height .18s linear}
+#sg-sorties a:hover,#sg-sorties a:focus-visible{opacity:.85;height:21px;outline:none}
+@media (pointer:coarse){#sg-sorties a{width:2px;height:26px;padding:8px 6px;background-clip:content-box}}
+</style>
+<script>(function(){var n=document.getElementById('sg-sorties');
+function lum(el){var c=getComputedStyle(el).backgroundColor||'';var m=c.match(/[\d.]+/g);
+if(!m||m.length<3)return null;if(m.length>3&&parseFloat(m[3])<0.2)return null;
+return (0.2126*m[0]+0.7152*m[1]+0.0722*m[2])/255;}
+var l=lum(document.body);if(l===null)l=lum(document.documentElement);if(l===null)l=1;
+n.style.color=l<0.5?'#ffffff':'#000000';})();</script>
+</body>
+</html>

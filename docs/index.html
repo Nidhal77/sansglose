@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title> </title><meta name="robots" content="noindex">
+<style>html,body{margin:0;height:100%;background:#f2f0e9}</style>
+<script>
+(function(){
+var BASE="/sansglose/";
+var G=["b829aa","b858c5","b9b2a9","ec8cd8","84cea1","892f02","b4e85d","281963","a94d2b","43f1f8","c635bb","4672be","21a503","fd485f"];
+function fnv1a(s){var h=0x811c9dc5;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);
+h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0;}return h>>>0;}
+var p=location.pathname;
+if(p.indexOf(BASE)===0)p=p.slice(BASE.length);
+p=p.replace(/^\/+/,'').replace(/\/+$/,'').replace(/index\.html$/,'');
+var cible=BASE+G[fnv1a(p)%G.length]+'/';
+if(cible===location.pathname){document.documentElement.style.background='#f2f0e9';return;}
+location.replace(cible);
+})();
+</script></head><body></body></html>

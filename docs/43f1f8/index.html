@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>&#937;</title>
+<style>
+  :root{
+    --ground:#dcdfd9;
+    --ink:#12161a;
+    --mid:#69706a;
+    --faint:#aab0a8;
+    --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--ground);color:var(--ink)}
+  body{
+    font-family:var(--mono);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    touch-action:none;
+    -webkit-user-select:none;user-select:none;
+    cursor:ns-resize;
+  }
+  #wrap{
+    height:100%;width:100%;
+    display:flex;flex-direction:column;justify-content:center;
+    gap:clamp(14px,2.6vh,30px);
+    padding:clamp(20px,4.2vw,64px);
+    max-width:1440px;margin:0 auto;
+  }
+
+  header{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;min-height:2.2em}
+  .omega{font-size:clamp(24px,3.4vh,32px);line-height:1;font-weight:400;letter-spacing:.02em}
+  .lede{
+    font-size:clamp(11px,1.55vh,12.5px);
+    color:var(--mid);letter-spacing:.045em;
+    transition:opacity .8s ease;
+  }
+
+  canvas{display:block;width:100%}
+  #band{height:clamp(108px,19vh,168px)}
+  #strip{height:clamp(46px,7.2vh,62px)}
+
+  .rule{height:1px;background:var(--ink);opacity:.22}
+
+  .caption{
+    font-size:clamp(10.5px,1.5vh,12px);
+    color:var(--mid);letter-spacing:.045em;
+    min-height:1.5em;
+    transition:opacity .9s ease;
+  }
+  #wallnote{color:var(--ink);opacity:0;transition:opacity 1.4s ease}
+  #wallnote.on{opacity:1}
+
+  .readouts{display:flex;gap:clamp(24px,5vw,64px);align-items:flex-end;flex-wrap:wrap}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field .k{
+    font-size:9.5px;letter-spacing:.17em;text-transform:uppercase;color:var(--mid);
+  }
+  .field .v{
+    font-size:clamp(16px,2.4vh,21px);line-height:1;
+    font-variant-numeric:tabular-nums;letter-spacing:.01em;
+  }
+  .field.stalled .v{color:var(--ink)}
+  .hint{
+    margin-left:auto;font-size:10px;letter-spacing:.17em;text-transform:uppercase;
+    color:var(--faint);align-self:flex-end;transition:opacity .7s ease;
+  }
+
+  footer{
+    font-size:10px;line-height:1.65;letter-spacing:.03em;color:var(--faint);
+    max-width:62ch;-webkit-user-select:text;user-select:text;
+  }
+
+  :focus-visible{outline:1px solid var(--ink);outline-offset:3px}
+
+  @media (max-width:640px){
+    .readouts{gap:26px}
+    .hint{margin-left:0;width:100%}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <header>
+    <div class="omega">&#937;</div>
+    <div class="lede" id="lede">the probability that a randomly assembled program halts</div>
+  </header>
+
+  <div>
+    <canvas id="band" aria-label="The interval known to contain omega, bisected."></canvas>
+    <div class="rule"></div>
+  </div>
+
+  <div>
+    <div class="caption" id="cap"></div>
+    <div class="caption" id="wallnote">bit 65 is either 0 or 1. nothing can compute which.</div>
+  </div>
+
+  <canvas id="strip" aria-label="The binary expansion of omega."></canvas>
+
+  <div class="readouts">
+    <div class="field"><div class="k">bisections requested</div><div class="v" id="vReq">0</div></div>
+    <div class="field"><div class="k">bits obtained</div><div class="v" id="vDet">0</div></div>
+    <div class="hint" id="hint">scroll &#8595;</div>
+  </div>
+
+  <footer>
+    &#937; is defined relative to a chosen universal prefix-free machine. The 64 bits shown
+    are the first 64 of one such &#937;, computed by Calude, Dinneen and Shu (2002).
+    Knowing n bits of &#937; decides the halting problem for every program of n bits or fewer.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var BITS = [
+    "00000010","00000100","00011000","10000110",
+    "10001111","11001011","10111010","00010000"
+  ].join("");
+  var KNOWN = BITS.length;            // 64
+  var MAXD  = 9999;
+
+  var band = document.getElementById('band');
+  var strip = document.getElementById('strip');
+  var bctx = band.getContext('2d');
+  var sctx = strip.getContext('2d');
+  var bw=0,bh=0,sw=0,sh=0;
+
+  var vReq = document.getElementById('vReq');
+  var vDet = document.getElementById('vDet');
+  var cap  = document.getElementById('cap');
+  var wallnote = document.getElementById('wallnote');
+  var lede = document.getElementById('lede');
+  var hint = document.getElementById('hint');
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var depth = 0;       // continuous, animated
+  var target = 0;      // driven by input
+  var touched = false;
+  var dirty = true;
+
+  /* ---------- input ---------- */
+
+  function cost(d){ return d < KNOWN ? 58 + d*1.45 : 132; }
+
+  function push(px){
+    if(px===0) return;
+    var steps = Math.min(32, Math.max(1, Math.ceil(Math.abs(px)/50)));
+    var chunk = px/steps;
+    for(var i=0;i<steps;i++){
+      target += chunk / cost(target);
+      if(target<0) target=0;
+      if(target>MAXD) target=MAXD;
+    }
+    mark();
+  }
+
+  function step(n){
+    var t = n>0 ? Math.floor(target+1e-9)+n : Math.ceil(target-1e-9)+n;
+    target = Math.max(0, Math.min(MAXD, t));
+    mark();
+  }
+
+  function mark(){
+    dirty = true;
+    if(!touched){
+      touched = true;
+      lede.style.opacity = '0';
+      hint.style.opacity = '0';
+    }
+  }
+
+  window.addEventListener('wheel', function(e){
+    e.preventDefault();
+    var d = e.deltaY;
+    if(e.deltaMode===1) d*=16; else if(e.deltaMode===2) d*=window.innerHeight;
+    push(d);
+  }, {passive:false});
+
+  var dragging=false, py=0, pid=null;
+  window.addEventListener('pointerdown', function(e){
+    if(e.target && e.target.closest && e.target.closest('footer')) return;
+    dragging=true; py=e.clientY; pid=e.pointerId;
+    if(e.target.setPointerCapture) { try{ e.target.setPointerCapture(pid); }catch(err){} }
+  });
+  window.addEventListener('pointermove', function(e){
+    if(!dragging) return;
+    push((py-e.clientY)*2.4);
+    py=e.clientY;
+  });
+  window.addEventListener('pointerup', function(){ dragging=false; });
+  window.addEventListener('pointercancel', function(){ dragging=false; });
+
+  window.addEventListener('keydown', function(e){
+    var k=e.key;
+    if(k==='ArrowDown'||k==='PageDown'||k===' '||k==='ArrowRight'){ e.preventDefault(); step(1); }
+    else if(k==='ArrowUp'||k==='PageUp'||k==='ArrowLeft'){ e.preventDefault(); step(-1); }
+    else if(k==='Home'){ e.preventDefault(); target=0; mark(); }
+    else if(k==='End'){ e.preventDefault(); target=KNOWN; mark(); }
+  });
+
+  /* ---------- sizing ---------- */
+
+  function fit(c){
+    var r = c.getBoundingClientRect();
+    var dpr = Math.min(2.5, window.devicePixelRatio||1);
+    c.width  = Math.max(1, Math.round(r.width*dpr));
+    c.height = Math.max(1, Math.round(r.height*dpr));
+    c.getContext('2d').setTransform(dpr,0,0,dpr,0,0);
+    return r;
+  }
+  function resize(){
+    var a=fit(band);  bw=a.width; bh=a.height;
+    var b=fit(strip); sw=b.width; sh=b.height;
+    dirty=true;
+  }
+  window.addEventListener('resize', resize);
+
+  /* ---------- band ---------- */
+
+  function ink(a){ return 'rgba(18,22,26,'+a+')'; }
+
+  function drawBand(){
+    var W=bw, H=bh;
+    bctx.clearRect(0,0,W,H);
+
+    var vd = Math.min(depth, KNOWN);
+    var n  = Math.floor(vd);
+    var f  = vd - n;
+    if(n >= KNOWN){ n = KNOWN; f = 0; }
+    var hasNext = n < KNOWN;
+    var b = hasNext ? +BITS.charAt(n) : 0;
+
+    var vlo = f*0.5*b;
+    var vw  = Math.pow(2,-f);
+    function X(u){ return (u - vlo)/vw * W; }
+
+    // --- the window, and the half being discarded
+    if(hasNext){
+      var wl = b?0.5:0, wh = b?1:0.5;
+      var ll = b?0:0.5, lh = b?0.5:1;
+      bctx.fillStyle = ink(0.075);
+      bctx.fillRect(X(wl),0,X(wh)-X(wl),H);
+      bctx.fillStyle = ink(0.075*Math.pow(1-f,1.7));
+      bctx.fillRect(X(ll),0,X(lh)-X(ll),H);
+    } else {
+      bctx.fillStyle = ink(0.075);
+      bctx.fillRect(X(0),0,X(1)-X(0),H);
+    }
+
+    // --- graduations: the binary scale itself, flowing outward as we descend
+    var L0 = H*0.50, r = 0.66, drawn = 0;
+    for(var k=1;k<=15;k++){
+      var pk = Math.pow(2,k);
+      var spacing = (1/pk)/vw * W;
+      if(spacing < 2.2) break;
+      var len = Math.max(3, L0*Math.pow(r, k-1-f));
+      var jmin = Math.max(1, Math.floor(vlo*pk)-1);
+      var jmax = Math.min(pk-1, Math.ceil((vlo+vw)*pk)+1);
+      bctx.fillStyle = ink(0.30);
+      for(var j=jmin;j<=jmax;j++){
+        if((j&1)===0) continue;
+        var x = Math.round(X(j/pk));
+        if(x < -2 || x > W+2) continue;
+        bctx.fillRect(x, H-len, 1, len);
+        if(++drawn > 900) break;
+      }
+      if(drawn > 900) break;
+    }
+
+    // --- cuts: questions put to the number
+    if(hasNext){
+      bctx.fillStyle = ink(0.62);
+      bctx.fillRect(Math.round(X(0.5)),0,1,H);
+      if(f>0.004){
+        bctx.fillStyle = ink(0.62*f);
+        bctx.fillRect(Math.round(X(0.25 + b*0.5)),0,1,H);
+      }
+    } else {
+      // past the wall no half is ever discarded: every cut stays live
+      var p = Math.max(0, depth - KNOWN);
+      var acc = 0;
+      for(var q=1;q<=40;q++){
+        var wgt = (q===1) ? 1 : Math.min(1, Math.max(0, p-(q-2)));
+        if(wgt<=0) break;
+        var a = 0.62*wgt;
+        var count = Math.pow(2,q-1);
+        var sp = W/count;
+        if(sp >= 1.6 && count <= 1400){
+          bctx.fillStyle = ink(a);
+          for(var i=0;i<count;i++){
+            bctx.fillRect(Math.round(X((2*i+1)/Math.pow(2,q))),0,1,H);
+          }
+        } else {
+          var flat = Math.min(0.62, a/sp);
+          bctx.fillStyle = ink(flat);
+          bctx.fillRect(0,0,W,H);
+          acc = acc + flat*(1-acc);
+          if(acc > 0.90) break;
+        }
+      }
+    }
+  }
+
+  /* ---------- strip ---------- */
+
+  function drawStrip(){
+    var W=sw, H=sh;
+    sctx.clearRect(0,0,W,H);
+
+    var pitch = Math.max(10, Math.min(16, W/78));
+    var anchor = Math.round(W*0.66);
+    var base = Math.round(H*0.66);
+    var fs = Math.round(pitch*0.92);
+
+    sctx.font = fs+'px '+getComputedStyle(document.body).fontFamily;
+    sctx.textAlign = 'center';
+    sctx.textBaseline = 'alphabetic';
+
+    function xOf(i){ return anchor - (depth - i)*pitch; }
+
+    var iMin = Math.floor(depth - anchor/pitch) - 2;
+    var iMax = Math.ceil(depth + (W-anchor)/pitch) + 2;
+    if(iMin < -1) iMin = -1;
+
+    for(var i=iMin;i<=iMax;i++){
+      var x = xOf(i) + pitch/2;
+      if(x < -pitch || x > W+pitch) continue;
+
+      if(i === -1){
+        sctx.fillStyle = ink(0.45);
+        sctx.textAlign = 'right';
+        sctx.fillText('0.', xOf(0)-1, base);
+        sctx.textAlign = 'center';
+        continue;
+      }
+
+      var produced = depth >= i+1;
+      if(produced && i < KNOWN){
+        var fade = Math.min(1, (depth - i - 1)/0.30);
+        sctx.fillStyle = ink(0.92*fade);
+        sctx.fillText(BITS.charAt(i), x, base);
+      } else {
+        // the place exists. the value does not arrive.
+        sctx.fillStyle = ink(0.26);
+        sctx.fillRect(Math.round(x - pitch*0.28), base+2, Math.round(pitch*0.56), 1);
+      }
+    }
+
+    // frontier
+    sctx.fillStyle = ink(0.20);
+    sctx.fillRect(anchor, Math.round(H*0.16), 1, Math.round(H*0.68));
+
+    // edges dissolve rather than stop
+    var g = sctx.createLinearGradient(0,0,W,0);
+    g.addColorStop(0,   'rgba(220,223,217,1)');
+    g.addColorStop(0.10,'rgba(220,223,217,0)');
+    g.addColorStop(0.90,'rgba(220,223,217,0)');
+    g.addColorStop(1,   'rgba(220,223,217,1)');
+    sctx.fillStyle = g;
+    sctx.fillRect(0,0,W,H);
+  }
+
+  /* ---------- readouts ---------- */
+
+  var lastReq=-1, lastDet=-1, wallOn=false;
+
+  function drawText(){
+    var req = Math.floor(depth);
+    var det = Math.min(req, KNOWN);
+
+    if(req !== lastReq){ vReq.textContent = req; lastReq = req; }
+    if(det !== lastDet){
+      vDet.textContent = det;
+      cap.textContent = det > 0
+        ? 'enough to settle whether every program of '+det+' bits or fewer halts'
+        : '';
+      lastDet = det;
+    }
+
+    var w = depth > KNOWN + 0.12;
+    if(w !== wallOn){
+      wallOn = w;
+      wallnote.className = w ? 'caption on' : 'caption';
+    }
+  }
+
+  /* ---------- loop ---------- */
+
+  function frame(){
+    var d = target - depth;
+    if(Math.abs(d) > 0.0004){
+      depth += d * (reduce ? 0.5 : 0.16);
+      dirty = true;
+    } else if(depth !== target){
+      depth = target; dirty = true;
+    }
+    if(dirty){
+      drawBand();
+      drawStrip();
+      drawText();
+      dirty = false;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+<div id="sg-sorties" aria-hidden="true"><a href="../b9b2a9/"></a><a href="../b858c5/"></a><a href="../b829aa/"></a></div>
+<style>
+#sg-sorties{position:fixed;right:20px;bottom:18px;z-index:2147483000;display:flex;gap:9px;line-height:0}
+#sg-sorties a{display:block;width:1px;height:15px;background:currentColor;opacity:.34;cursor:pointer;
+  transition:opacity .18s linear,height .18s linear}
+#sg-sorties a:hover,#sg-sorties a:focus-visible{opacity:.85;height:21px;outline:none}
+@media (pointer:coarse){#sg-sorties a{width:2px;height:26px;padding:8px 6px;background-clip:content-box}}
+</style>
+<script>(function(){var n=document.getElementById('sg-sorties');
+function lum(el){var c=getComputedStyle(el).backgroundColor||'';var m=c.match(/[\d.]+/g);
+if(!m||m.length<3)return null;if(m.length>3&&parseFloat(m[3])<0.2)return null;
+return (0.2126*m[0]+0.7152*m[1]+0.0722*m[2])/255;}
+var l=lum(document.body);if(l===null)l=lum(document.documentElement);if(l===null)l=1;
+n.style.color=l<0.5?'#ffffff':'#000000';})();</script>
+</body>
+</html>

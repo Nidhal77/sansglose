@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>combien de moi touche moi</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: #0d0f0d; overflow: hidden;
+    cursor: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #s {
+    position: fixed; left: 18px; bottom: 16px;
+    font: 400 13px/1 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    letter-spacing: 0.09em; font-variant-numeric: tabular-nums;
+    pointer-events: none; white-space: nowrap;
+  }
+  @media (max-width: 520px) { #s { left: 13px; bottom: 12px; font-size: 12px; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="s">0.0000</div>
+<script>
+"use strict";
+(function () {
+
+/* ------------------------------------------------------------------ *
+ *  Ambient space: flat Klein bottle of fixed area.
+ *  x wraps on [0,A).  y wraps on [0,B) WITH an x-reflection:
+ *      (x, y + B) ~ (A - x, y)
+ *  Nothing in this space is orientable along the body's own length.
+ * ------------------------------------------------------------------ */
+
+var AREA = 1.6;
+var A = 1.6, B = 1.0;
+
+/* body ------------------------------------------------------------- */
+var N      = 112;
+var RCORE  = 0.0175;   /* hard core                                    */
+var RCON   = 0.038;    /* what counts as touching                      */
+var RFLD   = 0.062;    /* reach of the signed self-field               */
+var EXCL   = 4;        /* ring separation below which contact is void  */
+
+var KS   = 200;        /* bond spring (dominates the chord term)       */
+var KB   = 45;         /* chord spring: rigidity, fixed                */
+var KREP = 150;
+var KFLD = 2.4;
+var SAT  = 6.0;        /* finite valence: a bound segment stops pulling */
+var PHI0 = 0.30;
+
+var KPTR = 2.6, RPTR = 0.15;
+var TAU_A = 0.30;      /* correlation time of the active forcing        */
+
+/* motor ranges ------------------------------------------------------ */
+var LEN_LO = 0.020, LEN_HI = 0.036;   /* the body lengthens, contracts  */
+var ALP_LO = -0.20, ALP_HI =  0.06;   /* repels itself, or coheres      */
+var SIG_LO =  0.15, SIG_HI =  1.75;   /* agitation                      */
+
+/* mind -------------------------------------------------------------- */
+var OM  = [0.0900, 0.1447, 0.2131, 0.3067];
+var BB  = [0.9, -1.4, 0.6, -0.8];
+var KC  = 0.045;
+var DOM = [2.90, 3.71, 4.63];   /* probing dither, one per channel      */
+var DA  = 0.06;
+var ETA = 14.0;                 /* descent on the estimated gradient    */
+var TAU_X = 5.0, SIG_X = 2.50;  /* tumbling, when the scalar goes quiet */
+
+var SUB = 3, H = 0.0025;
+
+/* ------------------------------------------------------------------ */
+
+var px = new Float64Array(N), py = new Float64Array(N);
+var fx = new Float64Array(N), fy = new Float64Array(N);
+var avx = new Float64Array(N), avy = new Float64Array(N);
+var cc = new Float64Array(N), ccp = new Float64Array(N);
+
+var rs = (Math.random() * 4294967295) >>> 0 || 1;
+function rnd() {
+  rs ^= rs << 13; rs >>>= 0;
+  rs ^= rs >>> 17;
+  rs ^= rs << 5;  rs >>>= 0;
+  return rs / 4294967296;
+}
+
+var s = 0;
+var u  = [0.5, 0.5, 0.5];
+var th = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28];
+var g = 0.3, sLP = 0.3;
+var grad = [0, 0, 0], ex = [0, 0, 0];
+var tc = 0;
+var ptr = { x: 0, y: 0, k: 0, want: 0 };
+
+function seed() {
+  var R = (N * 0.026) / (2 * Math.PI);
+  var amp = [], ph = [], m;
+  for (m = 0; m < 6; m++) { amp.push((rnd() - 0.5) * 0.11); ph.push(rnd() * 6.283); }
+  for (var i = 0; i < N; i++) {
+    var t = (i / N) * 2 * Math.PI, r = R;
+    for (m = 0; m < 6; m++) r += R * amp[m] * Math.sin((m + 2) * t + ph[m]);
+    px[i] = A / 2 + r * Math.cos(t);
+    py[i] = B / 2 + r * Math.sin(t);
+    wrapPos(i);
+  }
+}
+
+function wrapPos(i) {
+  var x = px[i], y = py[i];
+  while (y >= B) { y -= B; x = A - x; }
+  while (y < 0)  { y += B; x = A - x; }
+  x = x % A; if (x < 0) x += A;
+  px[i] = x; py[i] = y;
+}
+
+var _dx = 0, _dy = 0;
+function delta(ax, ay, bx, by) {
+  var qx = bx, qy = by, dy = qy - ay;
+  if (dy > B * 0.5)       { qy -= B; qx = A - qx; dy = qy - ay; }
+  else if (dy < -B * 0.5) { qy += B; qx = A - qx; dy = qy - ay; }
+  var dx = qx - ax;
+  if (dx > A * 0.5) dx -= A; else if (dx < -A * 0.5) dx += A;
+  _dx = dx; _dy = dy;
+}
+
+function ringDist(i, j) { var d = i - j; if (d < 0) d = -d; return d < N - d ? d : N - d; }
+
+function pairSpring(i, j, rest, k) {
+  delta(px[i], py[i], px[j], py[j]);
+  var dx = _dx, dy = _dy;
+  var d = Math.sqrt(dx * dx + dy * dy) || 1e-9;
+  var f = k * (d - rest) / d;
+  fx[i] += f * dx; fy[i] += f * dy;
+  fx[j] -= f * dx; fy[j] -= f * dy;
+}
+
+function physics(h) {
+  var L     = LEN_LO + (LEN_HI - LEN_LO) * u[0];
+  var alpha = ALP_LO + (ALP_HI - ALP_LO) * u[1];
+  var act   = SIG_LO + (SIG_HI - SIG_LO) * u[2];
+  var chord = 2 * L * Math.cos(PHI0 * 0.5);
+  var i, j;
+
+  ccp.set(cc);
+  fx.fill(0); fy.fill(0); cc.fill(0);
+
+  for (i = 0; i < N; i++) pairSpring(i, (i + 1) % N, L, KS);
+  for (i = 0; i < N; i++) pairSpring(i, (i + 2) % N, chord, KB);
+
+  for (i = 0; i < N; i++) {
+    for (j = i + 1; j < N; j++) {
+      if (ringDist(i, j) <= EXCL) continue;
+      delta(px[i], py[i], px[j], py[j]);
+      var dx = _dx, dy = _dy;
+      var d2 = dx * dx + dy * dy;
+      if (d2 > RFLD * RFLD) continue;
+      var d = Math.sqrt(d2) || 1e-9;
+      if (d < RCON) {
+        var t = (RCON - d) / (RCON - RCORE); if (t > 1) t = 1;
+        var w = t * t * (3 - 2 * t);
+        cc[i] += w; cc[j] += w;
+      }
+      var u2 = (RFLD - d) / (RFLD - RCORE); if (u2 > 1) u2 = 1;
+      var w2 = u2 * u2 * (3 - 2 * u2);
+      var sat = (alpha > 0) ? 1 / ((1 + SAT * ccp[i]) * (1 + SAT * ccp[j])) : 1;
+      var f = KFLD * alpha * sat * w2 / d;
+      if (d < RCORE) f -= KREP * (RCORE - d) / d;
+      fx[i] += f * dx; fy[i] += f * dy;
+      fx[j] -= f * dx; fy[j] -= f * dy;
+    }
+  }
+
+  if (ptr.k > 0.001) {
+    var K = KPTR * ptr.k;
+    for (i = 0; i < N; i++) {
+      delta(px[i], py[i], ptr.x, ptr.y);
+      var ex2 = _dx, ey2 = _dy;
+      var dd = Math.sqrt(ex2 * ex2 + ey2 * ey2);
+      if (dd > RPTR || dd < 1e-6) continue;
+      var ff = K * (1 - dd / RPTR) / dd;
+      fx[i] += ff * ex2; fy[i] += ff * ey2;
+    }
+  }
+
+  /* persistent active forcing: coherent writhe, not shimmer */
+  var rho = Math.exp(-h / TAU_A);
+  var sg  = act * Math.sqrt(1 - rho * rho);
+  for (i = 0; i < N; i++) {
+    var a = rnd() * 6.283185, r = sg * (rnd() + rnd());
+    avx[i] = avx[i] * rho + Math.cos(a) * r;
+    avy[i] = avy[i] * rho + Math.sin(a) * r;
+    var gx = fx[i] + avx[i], gy = fy[i] + avy[i];
+    var m = Math.sqrt(gx * gx + gy * gy);
+    if (m > 16) { gx *= 16 / m; gy *= 16 / m; }
+    px[i] += gx * h; py[i] += gy * h;
+    wrapPos(i);
+  }
+
+  /* the whole of the sensorium */
+  var acc = 0;
+  for (i = 0; i < N; i++) acc += 1 - Math.exp(-2.5 * cc[i]);
+  s = acc / N;
+}
+
+function mind(dt) {
+  tc += dt;
+  var k, nth = [0, 0, 0, 0];
+  for (k = 0; k < 4; k++) {
+    var kn = (k + 1) & 3, kp = (k + 3) & 3;
+    nth[k] = th[k] + dt * (
+      OM[k] * (1 + BB[k] * (s - 0.25)) +
+      KC * (Math.sin(th[kn] - th[k]) + Math.sin(th[kp] - th[k])));
+  }
+  for (k = 0; k < 4; k++) th[k] = nth[k] % 6.283185307;
+
+  var raw = 0.50 * Math.sin(th[0]) + 0.28 * Math.sin(th[1] + 1.1)
+          + 0.15 * Math.sin(th[2] + 2.6) + 0.07 * Math.sin(th[3]);
+  g = 0.345 + 0.255 * raw;
+
+  var aLP = 1 - Math.exp(-dt / 0.55);
+  sLP += (s - sLP) * aLP;
+  var shp = s - sLP;
+  var aG  = 1 - Math.exp(-dt / 1.1);
+  var err = s - g;
+
+  var rx = Math.exp(-dt / TAU_X), sx = SIG_X * Math.sqrt(1 - rx * rx);
+  var urg = Math.min(1, Math.abs(err) * 4);
+
+  for (k = 0; k < 3; k++) {
+    var est = shp * Math.sin(DOM[k] * tc) * (2 / DA);
+    grad[k] += (est - grad[k]) * aG;
+    var gm = Math.abs(grad[k]);
+    var conf = gm / (gm + 0.55);
+    ex[k] = ex[k] * rx + (rnd() + rnd() + rnd() - 1.5) * sx;
+    var drive = -ETA * err * grad[k] + ex[k] * (1 - conf) * urg;
+    var v = u[k] + drive * dt + 0.14 * (0.5 - u[k]) * dt;
+    u[k] = v < 0.02 ? 0.02 : (v > 0.98 ? 0.98 : v);
+  }
+}
+
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+function tick() {
+  var base = [u[0], u[1], u[2]];
+  u = [clamp01(base[0] + DA * Math.sin(DOM[0] * tc)),
+       clamp01(base[1] + DA * Math.sin(DOM[1] * tc)),
+       clamp01(base[2] + DA * Math.sin(DOM[2] * tc))];
+  for (var k = 0; k < SUB; k++) physics(H);
+  u = base;
+  mind(SUB * H);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Rendering.  The screen is the scalar.  The body is admitted only
+ *  in proportion to how folded it is — that is, only once its shape
+ *  has stopped meaning anything.
+ * ------------------------------------------------------------------ */
+
+var cv = document.getElementById("c");
+var ctx = cv.getContext("2d", { alpha: false });
+var readout = document.getElementById("s");
+var Wp = 0, Hp = 0, dpr = 1, scale = 1;
+
+var C0 = [13, 15, 13], C1 = [217, 221, 210];
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  Wp = Math.max(1, window.innerWidth);
+  Hp = Math.max(1, window.innerHeight);
+  cv.width  = Math.round(Wp * dpr);
+  cv.height = Math.round(Hp * dpr);
+  var asp = Wp / Hp;
+  var nA = Math.sqrt(AREA * asp), nB = Math.sqrt(AREA / asp);
+  var kx = nA / A, ky = nB / B;
+  for (var i = 0; i < N; i++) { px[i] *= kx; py[i] *= ky; }
+  A = nA; B = nB;
+  scale = (Wp / A) * dpr;
+}
+
+function draw() {
+  var t = Math.pow(s, 0.55);
+  var r = C0[0] + (C1[0] - C0[0]) * t;
+  var gg = C0[1] + (C1[1] - C0[1]) * t;
+  var b = C0[2] + (C1[2] - C0[2]) * t;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "rgb(" + (r | 0) + "," + (gg | 0) + "," + (b | 0) + ")";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  var vis = (s - 0.62) / 0.24;
+  vis = vis < 0 ? 0 : vis > 1 ? 1 : vis;
+  if (vis > 0.002) {
+    var a = Math.pow(vis, 1.6);
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(11,13,10," + (0.88 * a).toFixed(3) + ")";
+    ctx.beginPath();
+    for (var i = 0; i < N; i++) {
+      var j = (i + 1) % N;
+      delta(px[i], py[i], px[j], py[j]);
+      var dx = _dx * scale, dy = _dy * scale;
+      var xi = px[i] * scale, yi = py[i] * scale;
+      var xj = px[j] * scale, yj = py[j] * scale;
+      ctx.moveTo(xi, yi); ctx.lineTo(xi + dx, yi + dy);
+      ctx.moveTo(xj - dx, yj - dy); ctx.lineTo(xj, yj);
+    }
+    ctx.stroke();
+  }
+
+  readout.textContent = s.toFixed(4);
+  readout.style.color = t < 0.55 ? "rgba(228,231,224,0.45)" : "rgba(16,18,15,0.5)";
+}
+
+/* pointer: never drawn, never sensed as a cause ---------------------- */
+var lastMove = -1e9;
+function setPtr(e) {
+  var x = e.clientX / Wp * A;
+  var y = e.clientY / Hp * B;
+  ptr.x = x; ptr.y = y;
+  lastMove = performance.now();
+}
+window.addEventListener("pointermove", setPtr, { passive: true });
+window.addEventListener("pointerdown", setPtr, { passive: true });
+window.addEventListener("pointerleave", function () { lastMove = -1e9; }, { passive: true });
+window.addEventListener("blur", function () { lastMove = -1e9; });
+
+/* ------------------------------------------------------------------ */
+var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (reduced) SUB = 1;
+
+resize();
+seed();
+for (var w = 0; w < 900; w++) tick();
+
+window.addEventListener("resize", resize);
+
+var acc = 0, prev = performance.now();
+function frame(now) {
+  var dt = (now - prev) / 1000; prev = now;
+  if (dt > 0.25) dt = 0.25;
+  if (!document.hidden) {
+    ptr.want = (now - lastMove < 260) ? 1 : 0;
+    ptr.k += (ptr.want - ptr.k) * (1 - Math.exp(-dt / 0.9));
+    acc += dt;
+    var n = 0;
+    while (acc >= 1 / 60 && n < 3) { tick(); acc -= 1 / 60; n++; }
+    if (acc > 0.5) acc = 0;
+    draw();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

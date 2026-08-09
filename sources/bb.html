@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BB(n)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@200;400;500&family=Spectral:wght@300&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#DEE0DD;
+    --ink:#14171A;
+    --mid:rgba(20,23,26,.52);
+    --faint:rgba(20,23,26,.28);
+    --rule:rgba(20,23,26,.13);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--ground)}
+  body{
+    background:var(--ground);color:var(--ink);
+    font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-weight:400;-webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;
+    padding:clamp(26px,5vw,72px) clamp(16px,4vw,56px) 64px;
+  }
+  #frame{max-width:960px;margin:0 auto}
+
+  header{margin-bottom:clamp(30px,6vh,58px)}
+  .eyebrow{
+    font-size:10px;letter-spacing:.24em;text-transform:uppercase;
+    color:var(--mid);margin-bottom:20px;
+  }
+  h1{
+    font-weight:200;font-size:clamp(40px,8.5vw,74px);line-height:1;
+    letter-spacing:.01em;margin-bottom:26px;
+  }
+  .thesis{
+    font-family:"Spectral",Georgia,serif;font-weight:300;
+    font-size:clamp(15px,2.1vw,17.5px);line-height:1.62;
+    max-width:33em;color:var(--ink);
+  }
+  .thesis span{color:var(--mid)}
+
+  .row{
+    display:grid;
+    grid-template-columns:3px 2.6em 1fr 7.4em 13.6em;
+    column-gap:clamp(8px,1.6vw,18px);
+    align-items:center;
+  }
+  #head{
+    font-size:9.5px;letter-spacing:.19em;text-transform:uppercase;
+    color:var(--faint);padding-bottom:9px;border-bottom:1px solid var(--rule);
+  }
+  #head .r{text-align:right}
+
+  .m{
+    padding:13px 0;border-bottom:1px solid var(--rule);
+    cursor:pointer;outline:none;-webkit-tap-highlight-color:transparent;
+  }
+  .m:hover{background:rgba(20,23,26,.035)}
+  .m:focus-visible{background:rgba(20,23,26,.055)}
+  .m.inert{cursor:default}
+  .m.inert:hover{background:none}
+
+  .gut{align-self:stretch;position:relative;background:rgba(20,23,26,.07)}
+  .gut i{position:absolute;left:0;right:0;bottom:0;background:var(--ink);height:0%}
+  .m.inert .gut{background:none}
+
+  .n{font-size:14px;font-weight:400;color:var(--mid)}
+  .m.done .n{color:var(--ink)}
+
+  canvas{display:block;width:100%;height:22px}
+  .void{height:22px;position:relative}
+  .void::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(20,23,26,.12)}
+
+  .cells{text-align:right;font-size:11.5px;color:var(--faint)}
+  .m.done .cells{color:var(--mid)}
+
+  .steps{text-align:right;font-size:15px;font-weight:400;color:var(--mid);letter-spacing:.005em}
+  .m.done .steps{color:var(--ink);font-weight:500}
+  .steps.small{font-size:11px;color:var(--mid);letter-spacing:.06em}
+
+  #gap{height:1px;background:var(--ink);opacity:.34;margin:0}
+
+  .after{margin-top:26px;display:flex;flex-wrap:wrap;gap:18px;align-items:baseline}
+  .after p{font-size:11px;line-height:1.7;color:var(--mid);max-width:40em}
+  button{
+    font:400 11px/1 "IBM Plex Mono",ui-monospace,monospace;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--mid);
+    background:none;border:0;border-bottom:1px solid var(--rule);
+    padding:0 0 3px;cursor:pointer;margin-left:auto;
+  }
+  button:hover{color:var(--ink);border-bottom-color:var(--ink)}
+  button:focus-visible{outline:1px solid var(--ink);outline-offset:4px}
+
+  footer{
+    margin-top:clamp(44px,8vh,80px);padding-top:22px;
+    border-top:1px solid var(--rule);
+    font-size:10.5px;line-height:1.95;color:var(--faint);max-width:52em;
+  }
+  footer b{font-weight:400;color:var(--mid)}
+
+  @media (max-width:560px){
+    .row{grid-template-columns:3px 2.2em 1fr 12.2em;column-gap:9px}
+    .cells{display:none}
+    .steps{font-size:13px}
+    .steps.small{font-size:10px}
+    .thesis{font-size:15px}
+  }
+</style>
+</head>
+<body>
+<div id="frame">
+
+  <header>
+    <div class="eyebrow">castor affairé</div>
+    <h1>BB(n)</h1>
+    <p class="thesis">Le plus grand nombre d’étapes qu’une machine de Turing à n états peut faire avant de s’arrêter. <span>Chaque valeur est un entier fini et déterminé. À partir de six, aucun ne sera jamais écrit.</span></p>
+  </header>
+
+  <div class="row" id="head">
+    <div></div><div>n</div><div>ruban · fenêtre fixe</div><div class="r">cellules</div><div class="r">étapes</div>
+  </div>
+
+  <div id="stack"></div>
+
+  <div class="after">
+    <p id="hint">Cliquer une ligne lui donne tout le calcul disponible. Les six machines tournent ici, réellement&nbsp;; rien n’est affiché avant d’avoir été atteint.</p>
+    <button id="again" type="button">recommencer</button>
+  </div>
+
+  <footer>
+    <b>1, 6, 21, 107, 47 176 870.</b> La cinquième valeur a demandé trente-cinq ans et une preuve formelle, close en 2024.<br>
+    <b>BB(6) &gt; 10↑↑15.</b> La machine de la sixième ligne s’arrête — on le sait, on l’a démontré. Le nombre d’étapes a plus de chiffres que l’univers n’a d’atomes.<br>
+    <b>BB(748)</b> est indépendant de ZFC. Aucune durée de calcul n’y change rien&nbsp;: c’est la preuve qui manque, pas le temps.<br>
+    Machines&nbsp;: Radó (n≤3) · Brady (n=4) · Marxen–Buntrock 1989 (n=5) · mxdys 2025 (n=6).
+  </footer>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ── machines, notation standard : write / dir / état suivant, Z = arrêt ── */
+
+var SPECS = [
+  { n:1, s:"1RZ1RZ", bits:8 },
+  { n:2, s:"1RB0LB_1LA0LZ", bits:8 },
+  { n:3, s:"1RB0LZ_1LB0RC_1LC1LA", bits:9 },
+  { n:4, s:"1RB1LB_1LA0LC_1RZ1LD_1RD0RA", bits:9 },
+  { n:5, s:"1RB1LC_1RC1RB_1RD0LE_1LA1LD_1RZ0LA", bits:15 },
+  { n:6, s:"1RB1RA_1RC1RZ_1LD0RF_1RA0LE_0LD1RC_1RA0RE", bits:23 }
+];
+
+var BUDGET = 160000;   // étapes réelles par image
+
+function parse(spec){
+  var parts = spec.split("_"), n = parts.length;
+  var tr = new Int32Array(n*2*3);
+  for(var s=0;s<n;s++){
+    for(var b=0;b<2;b++){
+      var t = parts[s].substr(b*3,3), i = (s*2+b)*3;
+      if(t === "---"){ tr[i]=1; tr[i+1]=1; tr[i+2]=-1; }
+      else {
+        tr[i] = +t.charAt(0);
+        tr[i+1] = t.charAt(1)==="R" ? 1 : -1;
+        var c = t.charCodeAt(2);
+        tr[i+2] = (c===90||c===72) ? -1 : c-65;   // Z, H
+      }
+    }
+  }
+  return tr;
+}
+
+function machine(spec){
+  var m = { tr:parse(spec.s), tape:new Uint8Array(1<<spec.bits), n:spec.n };
+  reset(m); return m;
+}
+function reset(m){
+  m.tape.fill(0);
+  m.h = m.tape.length>>1; m.s = 0;
+  m.lo = m.h; m.hi = m.h;
+  m.slo = 0; m.shi = 0;
+  m.halted = false; m.over = false;
+  m.span = 0; m.dirty = true;
+}
+
+function advance(m, budget){
+  if(m.halted || m.over || budget < 1) return;
+  var tp = m.tape, tr = m.tr, T = tp.length;
+  var h = m.h, s = m.s, lo = m.lo, hi = m.hi, k = 0, i, b, nx;
+  while(k < budget){
+    b = tp[h]; i = (s*2+b)*3;
+    tp[h] = tr[i];
+    if(h < lo) lo = h;
+    if(h > hi) hi = h;
+    h += tr[i+1];
+    k++;
+    nx = tr[i+2];
+    if(nx < 0){ m.halted = true; break; }
+    s = nx;
+    if(h < 1 || h > T-2){ m.over = true; break; }
+  }
+  m.h = h; m.s = s; m.lo = lo; m.hi = hi;
+  m.slo += k;
+  if(m.slo >= 1e15){ m.shi += 1; m.slo -= 1e15; }
+  m.span = hi - lo + 1;
+  m.dirty = true;
+}
+
+/* ── formatage exact ── */
+
+var NB = "\u202F";
+function group(str){
+  var out = "", c = 0;
+  for(var i = str.length-1; i >= 0; i--){
+    out = str.charAt(i) + out;
+    if(++c % 3 === 0 && i > 0) out = NB + out;
+  }
+  return out;
+}
+function steps(m){
+  if(m.shi === 0) return group(String(m.slo));
+  var lo = String(m.slo); while(lo.length < 15) lo = "0" + lo;
+  return group(String(m.shi) + lo);
+}
+
+/* ── construction du tableau ── */
+
+var stack = document.getElementById("stack");
+var rows = [], focus = -1;
+
+SPECS.forEach(function(spec, k){
+  var el = document.createElement("div");
+  el.className = "row m";
+  el.tabIndex = 0;
+  el.setAttribute("role","button");
+  el.setAttribute("aria-label","machine à " + spec.n + " états");
+  el.innerHTML =
+    '<div class="gut"><i></i></div>' +
+    '<div class="n">' + spec.n + '</div>' +
+    '<div><canvas></canvas></div>' +
+    '<div class="cells">0</div>' +
+    '<div class="steps">0</div>';
+  stack.appendChild(el);
+
+  var r = {
+    el: el,
+    m: machine(spec),
+    bar: el.querySelector(".gut i"),
+    cv: el.querySelector("canvas"),
+    cx: el.querySelector("canvas").getContext("2d"),
+    cells: el.querySelector(".cells"),
+    steps: el.querySelector(".steps"),
+    lastCells: -1, lastSteps: "", lastSpan: -1, lastShare: -1, done: false, W:0, H:0
+  };
+  rows.push(r);
+
+  el.addEventListener("click", function(){ setFocus(focus === k ? -1 : k); });
+  el.addEventListener("keydown", function(e){
+    if(e.key === "Enter" || e.key === " "){ e.preventDefault(); setFocus(focus === k ? -1 : k); }
+    else if(e.key === "Escape"){ setFocus(-1); }
+  });
+});
+
+var gap = document.createElement("div"); gap.id = "gap"; stack.appendChild(gap);
+
+var zfc = document.createElement("div");
+zfc.className = "row m inert";
+zfc.innerHTML =
+  '<div class="gut"></div>' +
+  '<div class="n">748</div>' +
+  '<div><div class="void"></div></div>' +
+  '<div class="cells">—</div>' +
+  '<div class="steps small">indépendant de ZFC</div>';
+stack.appendChild(zfc);
+
+function setFocus(k){ focus = k; }
+
+/* ── ruban ── */
+
+var dpr = Math.min(2, window.devicePixelRatio || 1);
+
+function fit(r){
+  var w = r.cv.clientWidth || 1, h = 22;
+  r.W = Math.max(1, Math.round(w*dpr));
+  r.H = Math.round(h*dpr);
+  r.cv.width = r.W; r.cv.height = r.H;
+  r.lastSpan = -1;
+}
+
+/* La fenêtre est fixe : une case du ruban, une fois pour toutes, centrée sur
+   la case de départ. Rien n'est moyenné, rien n'est réduit. Le dessin reste
+   exact — c'est le ruban qui s'en va. */
+
+var PITCH = 3;   // px css par case
+
+function strip(r){
+  var m = r.m, W = r.W, H = r.H, cx = r.cx, tp = m.tape;
+  cx.clearRect(0,0,W,H);
+
+  var pitch = PITCH*dpr;
+  var blk   = Math.max(1, Math.round(pitch*0.62));
+  var cells = Math.max(1, Math.floor(W/pitch));
+  var o     = tp.length>>1;
+  var start = o - (cells>>1);
+
+  cx.fillStyle = "rgba(20,23,26,.11)";
+  cx.fillRect(0, H-1, W, 1);
+
+  var top = Math.round(3*dpr), bh = H - Math.round(5*dpr);
+  cx.fillStyle = "rgba(20,23,26,.88)";
+  for(var i = 0; i < cells; i++){
+    var c = start + i;
+    if(c < 0 || c >= tp.length || !tp[c]) continue;
+    cx.fillRect(Math.round(i*pitch), top, blk, bh);
+  }
+
+  cx.fillStyle = "rgba(20,23,26,.34)";
+  cx.fillRect(Math.round((o-start)*pitch), H-1, blk, 1);
+
+  var F = Math.min(W*0.18, 30*dpr), g;
+  if(m.span > 0 && m.lo < start){
+    g = cx.createLinearGradient(0,0,F,0);
+    g.addColorStop(0,"rgba(222,224,221,1)"); g.addColorStop(1,"rgba(222,224,221,0)");
+    cx.fillStyle = g; cx.fillRect(0,0,F,H);
+  }
+  if(m.span > 0 && m.hi >= start+cells){
+    g = cx.createLinearGradient(W-F,0,W,0);
+    g.addColorStop(0,"rgba(222,224,221,0)"); g.addColorStop(1,"rgba(222,224,221,1)");
+    cx.fillStyle = g; cx.fillRect(W-F,0,F,H);
+  }
+}
+
+/* ── boucle ── */
+
+function budgets(){
+  var live = [], i;
+  for(i = 0; i < rows.length; i++) if(!rows[i].m.halted && !rows[i].m.over) live.push(i);
+  var out = new Array(rows.length); for(i=0;i<out.length;i++) out[i]=0;
+  if(!live.length) return out;
+  if(focus >= 0 && !rows[focus].m.halted && !rows[focus].m.over){
+    out[focus] = BUDGET; return out;
+  }
+  var each = Math.floor(BUDGET/live.length);
+  for(i = 0; i < live.length; i++) out[live[i]] = each;
+  return out;
+}
+
+function frame(){
+  var b = budgets(), i, r, m;
+
+  for(i = 0; i < rows.length; i++) advance(rows[i].m, b[i]);
+
+  for(i = 0; i < rows.length; i++){
+    r = rows[i]; m = r.m;
+
+    var share = b[i]/BUDGET;
+    if(share !== r.lastShare){
+      r.bar.style.height = (share*100).toFixed(1) + "%";
+      r.lastShare = share;
+    }
+    if((m.halted || m.over) && !r.done){ r.done = true; r.el.classList.add("done"); }
+
+    if(m.span !== r.lastSpan){
+      r.cells.textContent = group(String(m.span));
+      r.lastSpan = m.span;
+      strip(r);
+    } else if(m.dirty && !m.halted){
+      strip(r);
+    }
+    m.dirty = false;
+
+    var s = steps(m);
+    if(s !== r.lastSteps){ r.steps.textContent = s; r.lastSteps = s; }
+  }
+  requestAnimationFrame(frame);
+}
+
+function layout(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  for(var i = 0; i < rows.length; i++){ fit(rows[i]); strip(rows[i]); }
+}
+
+document.getElementById("again").addEventListener("click", function(){
+  for(var i = 0; i < rows.length; i++){
+    reset(rows[i].m);
+    rows[i].done = false;
+    rows[i].el.classList.remove("done");
+    rows[i].lastSpan = -1; rows[i].lastSteps = ""; rows[i].lastShare = -1;
+  }
+  focus = -1;
+});
+
+var rt;
+window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(layout, 90); });
+
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+layout();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

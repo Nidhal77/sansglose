@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>routage sans adresses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#f2f0e9;overflow:hidden;}
+  canvas{display:block;touch-action:none;cursor:crosshair;}
+  #g{
+    position:fixed;left:22px;bottom:20px;
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-weight:300;font-size:10.5px;line-height:1.75;
+    letter-spacing:.09em;color:rgba(27,26,23,.36);
+    transition:color 2.4s ease;pointer-events:none;user-select:none;
+  }
+  #g.q{color:rgba(27,26,23,.12);}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="g">clic — déposer<br>glisser — demander</div>
+<script>
+"use strict";
+const INK = [27,26,23];
+const ink = (a)=>`rgba(${INK[0]},${INK[1]},${INK[2]},${a})`;
+
+const PAR = {
+  flowSub:2, adaptA:0.55, adaptB:0.33, adaptK:0.045, adaptG:1.5,
+  Dmin:0.02, Dmax:1.6, absorb:0.35, satiate:10.0, hRelax:2.0,
+  injRate:2.4, injAmt:0.8
+};
+
+function makeRNG(seed){let s=seed>>>0;return function(){s^=s<<13;s>>>=0;s^=s>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+const hint = document.getElementById('g');
+let DPR=1, W=0, H=0, M=null, bloom=null, fld=null;
+const FS=14;   // appetite is a field; it is not resolved at the scale of sites
+
+/* ---------- medium ---------- */
+
+function buildMedium(W,H,seed){
+  const rnd = makeRNG(seed);
+  const target = Math.max(60, Math.min(170, Math.round(W*H/9000)));
+  const rmin = Math.sqrt((W*H)/target)*0.86;
+  const pts=[]; let guard=0;
+  while(pts.length<target && guard<target*400){
+    guard++;
+    const x=rnd()*W, y=rnd()*H;
+    let ok=true;
+    for(let i=0;i<pts.length;i++){
+      const dx=pts[i].x-x, dy=pts[i].y-y;
+      if(dx*dx+dy*dy < rmin*rmin){ok=false;break;}
+    }
+    if(ok) pts.push({x,y});
+  }
+  const P = pts.map(p=>({x:p.x,y:p.y,u:0,h:0.15,n:rnd()}));
+  const E={a:[],b:[],L:[],Ln:[],D:[]};
+  const R = rmin*1.75, key=new Set();
+  for(let i=0;i<P.length;i++){
+    const cand=[];
+    for(let j=0;j<P.length;j++){
+      if(i===j) continue;
+      const d=Math.hypot(P[i].x-P[j].x,P[i].y-P[j].y);
+      if(d<R) cand.push([d,j]);
+    }
+    cand.sort((u,v)=>u[0]-v[0]);
+    for(let k=0;k<Math.min(cand.length,6);k++){
+      const j=cand[k][1];
+      const kk = i<j ? i+'_'+j : j+'_'+i;
+      if(key.has(kk)) continue;
+      key.add(kk);
+      E.a.push(i);E.b.push(j);E.L.push(cand[k][0]);E.D.push(0.1+rnd()*0.1);
+    }
+  }
+  let mean=0; for(const l of E.L) mean+=l; mean/=Math.max(1,E.L.length);
+  E.mean = mean;
+  E.Ln = E.L.map(l=>l/mean);
+  const adj = P.map(()=>[]);
+  for(let e=0;e<E.a.length;e++){adj[E.a[e]].push(e);adj[E.b[e]].push(e);}
+  const app=[];
+  for(let k=0;k<3;k++) app.push({
+    x:rnd()*W, y:rnd()*H, a:rnd()*6.283,
+    r:Math.min(W,H)*(0.16+0.10*rnd()), s:0.55+0.35*rnd()
+  });
+  return {P,E,adj,app,W,H,rnd,rmin,du:new Float64Array(P.length),Q:[]};
+}
+
+function step(M,dt){
+  const {P,E,app,rnd}=M;
+  const n=P.length, m=E.a.length;
+  for(const c of app){
+    c.a += (rnd()-0.5)*1.4*dt;
+    const v = Math.min(M.W,M.H)*0.35;
+    c.x += Math.cos(c.a)*v*dt; c.y += Math.sin(c.a)*v*dt;
+    if(c.x<0||c.x>M.W){c.a=Math.PI-c.a; c.x=Math.max(0,Math.min(M.W,c.x));}
+    if(c.y<0||c.y>M.H){c.a=-c.a; c.y=Math.max(0,Math.min(M.H,c.y));}
+  }
+  for(let i=0;i<n;i++){
+    let t=0.05+0.10*P[i].n;
+    for(const c of app){
+      const dx=P[i].x-c.x, dy=P[i].y-c.y;
+      t += c.s*Math.exp(-(dx*dx+dy*dy)/(2*c.r*c.r));
+    }
+    if(t>1) t=1;
+    P[i].h += (t-P[i].h)*PAR.hRelax*dt;
+    if(P[i].h<0) P[i].h=0;
+  }
+  const sub=PAR.flowSub, sdt=dt/sub;
+  const flux=new Float64Array(m);
+  for(let s=0;s<sub;s++){
+    const du=M.du; du.fill(0);
+    for(let e=0;e<m;e++){
+      const a=E.a[e], b=E.b[e];
+      const q = E.D[e]*(P[a].u-P[b].u)/E.Ln[e];
+      du[a]-=q*sdt; du[b]+=q*sdt;
+      flux[e]+=Math.abs(q)/sub;
+    }
+    for(let i=0;i<n;i++){ P[i].u+=du[i]; if(P[i].u<0) P[i].u=0; }
+  }
+  const kG = Math.pow(PAR.adaptK,PAR.adaptG);
+  for(let e=0;e<m;e++){
+    const xg = Math.pow(flux[e],PAR.adaptG);
+    const f = xg/(kG+xg);
+    let d = E.D[e] + (PAR.adaptA*f - PAR.adaptB*E.D[e])*dt;
+    if(d<PAR.Dmin)d=PAR.Dmin; if(d>PAR.Dmax)d=PAR.Dmax;
+    E.D[e]=d;
+  }
+  for(let i=0;i<n;i++){
+    const a = P[i].h*PAR.absorb*P[i].u*dt;
+    P[i].u-=a;
+    P[i].h-=PAR.satiate*a;
+    if(P[i].h<0)P[i].h=0;
+  }
+  if(rnd() < PAR.injRate*dt){
+    const i=Math.floor(rnd()*n);
+    P[i].u += PAR.injAmt+rnd()*0.6;
+  }
+}
+
+function addEdge(M,i,j){
+  const {P,E,adj}=M;
+  if(i===j) return -1;
+  for(const e of adj[i]) if(E.a[e]===j||E.b[e]===j) return e;
+  const L=Math.hypot(P[i].x-P[j].x,P[i].y-P[j].y);
+  E.a.push(i);E.b.push(j);E.L.push(L);E.Ln.push(L/E.mean);E.D.push(PAR.Dmin);
+  const e=E.a.length-1; adj[i].push(e);adj[j].push(e);
+  return e;
+}
+
+// A question is a straight, gradient-blind object. It is decomposed by its own
+// geometry, not by the mesh's economy — so it cuts chords the medium never chose.
+function chord(M,ai,bi){
+  const {P}=M;
+  if(ai===bi){
+    let best=-1,bd=1e18;
+    for(let j=0;j<P.length;j++){ if(j===ai) continue;
+      const d=Math.hypot(P[j].x-P[ai].x,P[j].y-P[ai].y); if(d<bd){bd=d;best=j;} }
+    const e=addEdge(M,ai,best);
+    return {sites:[ai,best,ai],edges:[e,e]};
+  }
+  const A=P[ai],B=P[bi];
+  const len=Math.hypot(B.x-A.x,B.y-A.y);
+  const steps=Math.max(2,Math.ceil(len/(M.rmin*0.45)));
+  const sites=[ai];
+  for(let s=1;s<=steps;s++){
+    const t=s/steps;
+    const x=A.x+(B.x-A.x)*t, y=A.y+(B.y-A.y)*t;
+    let best=-1,bd=1e18;
+    for(let j=0;j<P.length;j++){
+      const dx=P[j].x-x, dy=P[j].y-y, d=dx*dx+dy*dy;
+      if(d<bd){bd=d;best=j;}
+    }
+    if(best!==sites[sites.length-1] && sites.indexOf(best)<0) sites.push(best);
+  }
+  if(sites[sites.length-1]!==bi){
+    const k=sites.indexOf(bi); if(k>=0) sites.splice(k,1);
+    sites.push(bi);
+  }
+  const edges=[];
+  for(let i=0;i+1<sites.length;i++){
+    const e=addEdge(M,sites[i],sites[i+1]);
+    if(e>=0) edges.push(e);
+  }
+  return {sites,edges};
+}
+
+/* ---------- rendering ---------- */
+
+function makeBloom(){
+  const s=128, o=document.createElement('canvas');
+  o.width=o.height=s;
+  const g=o.getContext('2d');
+  const rg=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+  rg.addColorStop(0,   ink(0.115));
+  rg.addColorStop(0.45,ink(0.050));
+  rg.addColorStop(1,   ink(0));
+  g.fillStyle=rg; g.fillRect(0,0,s,s);
+  return o;
+}
+
+function nearest(M,x,y){
+  let best=0,bd=1e18;
+  for(let i=0;i<M.P.length;i++){
+    const dx=M.P[i].x-x, dy=M.P[i].y-y, d=dx*dx+dy*dy;
+    if(d<bd){bd=d;best=i;}
+  }
+  return best;
+}
+
+function polySample(pts,k){
+  const seg=[],out=[];
+  let total=0;
+  for(let i=0;i+1<pts.length;i++){
+    const d=Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
+    seg.push(d); total+=d;
+  }
+  if(total<=0) return new Array(k).fill(pts[0]);
+  for(let s=0;s<k;s++){
+    let t=(s/(k-1))*total, i=0;
+    while(i<seg.length && t>seg[i]){ t-=seg[i]; i++; }
+    if(i>=seg.length){ out.push(pts[pts.length-1]); continue; }
+    const f=seg[i]>0? t/seg[i] : 0;
+    out.push({x:pts[i].x+(pts[i+1].x-pts[i].x)*f, y:pts[i].y+(pts[i+1].y-pts[i].y)*f});
+  }
+  return out;
+}
+
+const ease = t => t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+const QDUR = 1650, QBOOST = 0.95, NS = 90;
+
+function drawQuestion(M,Q,now){
+  const p = Math.min(1,(now-Q.t0)/QDUR);
+  const {P}=M;
+  const A=P[Q.ai], B=P[Q.bi];
+  let ax=A.x, ay=A.y, bx=B.x, by=B.y;
+  const ux=bx-ax, uy=by-ay, L=Math.hypot(ux,uy)||1;
+  const nx=ux/L, ny=uy/L;
+
+  // phase 1 — direction dissolves
+  const p1 = Math.min(1, p/0.20);
+  // phase 2 — the two endpoints lose their privilege
+  const p2 = p<0.20 ? 0 : Math.min(1,(p-0.20)/0.22);
+  // phase 3 — the straight object is decomposed onto the mesh
+  const p3 = p<0.42 ? 0 : ease(Math.min(1,(p-0.42)/0.58));
+
+  const ret = 11*ease(p2)*(1-p3);
+  const sx=ax+nx*ret, sy=ay+ny*ret, ex=bx-nx*ret, ey=by-ny*ret;
+
+  const straight = polySample([{x:sx,y:sy},{x:ex,y:ey}],NS);
+  const poly = polySample(Q.sites.map(i=>({x:P[i].x,y:P[i].y})),NS);
+
+  const alpha = (1-p3)*(1-p3)*0.82;
+  if(alpha>0.004){
+    cx.lineCap='round';
+    for(let i=0;i+1<NS;i++){
+      const t=i/(NS-1);
+      const a1={x:straight[i].x+(poly[i].x-straight[i].x)*p3,   y:straight[i].y+(poly[i].y-straight[i].y)*p3};
+      const a2={x:straight[i+1].x+(poly[i+1].x-straight[i+1].x)*p3, y:straight[i+1].y+(poly[i+1].y-straight[i+1].y)*p3};
+      const tapered = 0.75+2.35*t;
+      const w = tapered+(2.0-tapered)*p1;
+      cx.strokeStyle=ink(alpha);
+      cx.lineWidth=w;
+      cx.beginPath(); cx.moveTo(a1.x,a1.y); cx.lineTo(a2.x,a2.y); cx.stroke();
+    }
+    // the head: the mark that made it a direction
+    const hs=(1-p1);
+    if(hs>0.01){
+      cx.save(); cx.translate(ex,ey); cx.rotate(Math.atan2(ny,nx));
+      cx.fillStyle=ink(alpha*hs);
+      cx.beginPath(); cx.moveTo(0,0); cx.lineTo(-6.5,3.4); cx.lineTo(-6.5,-3.4); cx.closePath(); cx.fill();
+      cx.restore();
+    }
+    // the origin mark: the site it claimed to be from
+    const os=(1-ease(p2));
+    if(os>0.01){
+      cx.strokeStyle=ink(alpha*os); cx.lineWidth=1;
+      cx.beginPath(); cx.arc(ax,ay,3.2+1.6*(1-os),0,6.2832); cx.stroke();
+    }
+  }
+
+  // conductance is handed over as the object is decomposed
+  const want = p3*QBOOST;
+  const give = want-Q.given;
+  if(give>0){
+    for(const e of Q.edges) M.E.D[e]=Math.min(PAR.Dmax, M.E.D[e]+give);
+    Q.given = want;
+  }
+  return p>=1;
+}
+
+function render(M,now){
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.fillStyle='#f2f0e9';
+  cx.fillRect(0,0,W,H);
+
+  const {P,E}=M;
+  // appetite: where quantity is consumed. it drifts on its own.
+  const F=fld.g;
+  F.clearRect(0,0,fld.w,fld.h);
+  for(let i=0;i<P.length;i++){
+    const r=(10+86*P[i].h)/FS;
+    if(r<0.35) continue;
+    F.globalAlpha=Math.min(1,P[i].h*1.55);
+    F.drawImage(bloom, P[i].x/FS-r, P[i].y/FS-r, r*2, r*2);
+  }
+  F.globalAlpha=1;
+  cx.imageSmoothingEnabled=true;
+  cx.drawImage(fld.el,0,0,W,H);
+
+  // tubes
+  const span = PAR.Dmax-PAR.Dmin;
+  cx.lineCap='round';
+  for(let e=0;e<E.a.length;e++){
+    const t=Math.min(1,Math.max(0,(E.D[e]-PAR.Dmin)/span));
+    if(t<0.008) continue;
+    const s=Math.sqrt(t);
+    cx.strokeStyle=ink(0.05+0.70*s);
+    cx.lineWidth=0.3+3.6*s;
+    const a=P[E.a[e]], b=P[E.b[e]];
+    cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke();
+  }
+
+  // sites: quantity present, right now, and nothing else
+  for(let i=0;i<P.length;i++){
+    const q=P[i].u/(P[i].u+0.9);
+    const r=1.15+5.0*q;
+    cx.fillStyle=ink(0.30+0.62*q);
+    cx.beginPath(); cx.arc(P[i].x,P[i].y,r,0,6.2832); cx.fill();
+  }
+
+  for(let k=M.Q.length-1;k>=0;k--){
+    if(drawQuestion(M,M.Q[k],now)) M.Q.splice(k,1);
+  }
+
+  // an interrogation in progress: two addresses and a direction
+  if(drag && drag.moved){
+    const A=P[drag.ai];
+    const ux=drag.x-A.x, uy=drag.y-A.y, L=Math.hypot(ux,uy)||1;
+    const nx=ux/L, ny=uy/L;
+    const pts=polySample([{x:A.x,y:A.y},{x:drag.x,y:drag.y}],40);
+    cx.lineCap='round';
+    for(let i=0;i+1<40;i++){
+      const t=i/39;
+      cx.strokeStyle=ink(0.80);
+      cx.lineWidth=0.75+2.35*t;
+      cx.beginPath(); cx.moveTo(pts[i].x,pts[i].y); cx.lineTo(pts[i+1].x,pts[i+1].y); cx.stroke();
+    }
+    cx.save(); cx.translate(drag.x,drag.y); cx.rotate(Math.atan2(ny,nx));
+    cx.fillStyle=ink(0.80);
+    cx.beginPath(); cx.moveTo(0,0); cx.lineTo(-6.5,3.4); cx.lineTo(-6.5,-3.4); cx.closePath(); cx.fill();
+    cx.restore();
+    cx.strokeStyle=ink(0.80); cx.lineWidth=1;
+    cx.beginPath(); cx.arc(A.x,A.y,3.2,0,6.2832); cx.stroke();
+  }
+}
+
+/* ---------- interaction ---------- */
+
+let drag=null, touched=false;
+
+function pos(ev){
+  const r=cv.getBoundingClientRect();
+  return {x:ev.clientX-r.left, y:ev.clientY-r.top};
+}
+function firstTouch(){
+  if(touched) return;
+  touched=true;
+  setTimeout(()=>hint.classList.add('q'),900);
+}
+
+cv.addEventListener('pointerdown',ev=>{
+  cv.setPointerCapture(ev.pointerId);
+  const p=pos(ev);
+  drag={ai:nearest(M,p.x,p.y), x:p.x, y:p.y, x0:p.x, y0:p.y, moved:false};
+});
+cv.addEventListener('pointermove',ev=>{
+  if(!drag) return;
+  const p=pos(ev);
+  drag.x=p.x; drag.y=p.y;
+  if(Math.hypot(p.x-drag.x0,p.y-drag.y0)>11) drag.moved=true;
+});
+function release(){
+  if(!drag) return;
+  firstTouch();
+  if(!drag.moved){
+    M.P[drag.ai].u += 2.2;               // deposited. it will be consumed, in fractions, elsewhere.
+  }else{
+    const bi=nearest(M,drag.x,drag.y);   // the question is asked
+    const path=chord(M,drag.ai,bi);
+    if(path.edges.length) M.Q.push({ai:drag.ai,bi,sites:path.sites,edges:path.edges,t0:performance.now(),given:0});
+  }
+  drag=null;
+}
+cv.addEventListener('pointerup',release);
+cv.addEventListener('pointercancel',release);
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+/* ---------- loop ---------- */
+
+function resize(){
+  DPR=Math.min(2,window.devicePixelRatio||1);
+  W=window.innerWidth; H=window.innerHeight;
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const fe=document.createElement('canvas');
+  fe.width=Math.max(1,Math.ceil(W/FS)); fe.height=Math.max(1,Math.ceil(H/FS));
+  fld={el:fe,g:fe.getContext('2d'),w:fe.width,h:fe.height};
+  M=buildMedium(W,H,(Date.now()^0x9e3779b9)>>>0);
+  drag=null;
+}
+let rt=null;
+window.addEventListener('resize',()=>{clearTimeout(rt); rt=setTimeout(resize,220);});
+
+bloom=makeBloom();
+resize();
+
+let last=performance.now();
+(function frame(now){
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.05) dt=0.05;
+  step(M,dt);
+  render(M,now);
+  requestAnimationFrame(frame);
+})(last);
+</script>
+</body>
+</html>
